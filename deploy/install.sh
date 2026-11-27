@@ -24,6 +24,7 @@ die()  { printf '\033[31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
 as_svc() { sudo -u "$SVC_USER" -H "$@"; }
 
 [[ $EUID -eq 0 ]] || die "run with sudo"
+cd /  # commands run as the service user can't enter the caller's home directory
 
 # ------------------------------------------------------------------ prerequisites
 step "Checking prerequisites"
