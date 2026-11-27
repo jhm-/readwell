@@ -167,6 +167,11 @@ async def run_source(conn: sqlite3.Connection, fetcher: Fetcher, cfg: Config, s:
         err = SourceError(f"{type(e).__name__}: {e}")
         err.kind = "network"
         return _record_failure(conn, cfg, s, row, run_id, err)
+    except Exception as e:  # noqa: BLE001 — a bug or a parser crash in one source must not stop the others
+        log.exception("%s: unexpected error", s.id)
+        err = SourceError(f"internal error: {type(e).__name__}: {e}")
+        err.kind = "internal"
+        return _record_failure(conn, cfg, s, row, run_id, err)
 
     stats = None
     if not result.not_modified:

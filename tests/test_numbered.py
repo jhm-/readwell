@@ -134,3 +134,51 @@ def test_bot_challenge_is_an_error_not_a_miss(site, dirs):
                                           "start": {"year": 2026, "n": 1}}])
     (o,) = asyncio.run(Worker(config_dir, data_dir, transport=site.transport).run_once())
     assert o.status == "error" and "bot-check" in o.error
+
+
+def test_unreadable_pdf_page_is_skipped(monkeypatch):
+    from pypdf import PageObject
+    from pypdf.errors import LimitReachedError
+
+    real = PageObject.extract_text
+    calls = {"n": 0}
+
+    def flaky(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise LimitReachedError("Reached maximum number of tokens per stream.")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(PageObject, "extract_text", flaky)
+    pdf = make_pdf(["ORDER-IN-COUNCIL 2026/01", "Pursuant to section 3 of the Notaries Act, it is ordered."])
+    import io
+
+    from pypdf import PdfReader, PdfWriter
+    w = PdfWriter()
+    for _ in range(2):
+        w.add_page(PdfReader(io.BytesIO(pdf)).pages[0])
+    buf = io.BytesIO()
+    w.write(buf)
+    doc = pdf_text(buf.getvalue())
+    assert "Notaries Act" in doc.text  # page 2 survived page 1's failure
+
+
+def test_crash_in_one_source_does_not_stop_the_others(site, dirs, monkeypatch):
+    from readwell.sources import numbered
+
+    config_dir, data_dir = dirs
+
+    async def boom(*a, **k):
+        raise RuntimeError("parser exploded")
+
+    monkeypatch.setattr(numbered, "_probe", boom)
+    site.add("https://news.test/feed", '<?xml version="1.0"?><rss version="2.0"><channel><title>N</title>'
+             '<item><title>Hello there everyone today</title><link>https://news.test/a</link></item>'
+             '</channel></rss>', "application/rss+xml")
+    write_sources(config_dir, "s.yaml", [
+        {"id": "oic", "kind": "numbered", "url_template": TEMPLATE, "start": {"year": 2026, "n": 1}},
+        {"id": "news", "feed_url": "https://news.test/feed"},
+    ])
+    out = {o.source_id: o for o in asyncio.run(Worker(config_dir, data_dir, transport=site.transport).run_once())}
+    assert out["oic"].status == "error" and "parser exploded" in out["oic"].error
+    assert out["news"].status == "ok"

@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 from dataclasses import dataclass
 from html import escape
 
 from pypdf import PdfReader
-from pypdf.errors import PdfReadError
+from pypdf.errors import PdfReadError, PyPdfError
 
 from ..pipeline.normalize import clean_html, html_to_text
 from .article import extract_article
 
 ACT = re.compile(r"\b((?:[A-Z][A-Za-z'’\-]+,? (?:and |of |the |de |du )?){1,7}Act)\b")
+log = logging.getLogger(__name__)
+
 SCANNED = "<p><i>Scanned document with no text layer — open the PDF to read it.</i></p>"
 
 
@@ -34,10 +37,17 @@ def pdf_text(content: bytes, max_pages: int = 60) -> DocText:
     try:
         reader = PdfReader(io.BytesIO(content))
         pages = reader.pages[:max_pages]
-        text = "\n\n".join((p.extract_text() or "") for p in pages)
-    except (PdfReadError, ValueError, KeyError, TypeError) as e:
+    except (PyPdfError, PdfReadError, ValueError, KeyError, TypeError) as e:
         return DocText(text="", html=f"<p><i>Could not read this PDF ({escape(str(e)[:120])}).</i></p>")
-    text = _tidy(text)
+    parts, bad = [], 0
+    for p in pages:
+        try:
+            parts.append(p.extract_text() or "")
+        except Exception:  # noqa: BLE001 — one malformed page (e.g. pypdf's token limit) shouldn't lose the rest
+            bad += 1
+    if bad:
+        log.info("PDF: skipped %d unreadable page(s) of %d", bad, len(pages))
+    text = _tidy("\n\n".join(parts))
     if len(text) < 40:
         return DocText(text="", html=SCANNED, pages=len(reader.pages), scanned=True)
     return DocText(text=text, html=text_to_html(text), pages=len(reader.pages))
