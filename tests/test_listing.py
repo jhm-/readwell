@@ -98,3 +98,25 @@ def test_pagination_title_template_and_dates(site, dirs):
     assert rows["OIC 386/2026 — Water Act"]["published_at"] == "2026-11-25T12:00:00Z"
     assert rows["OIC 387/2026 — Mines Act"]["url"] == "https://gov.test/oic/387_2026.html"
     assert "https://gov.test/oic?page=4" not in [str(r.url) for r in site.requests]
+
+
+def test_document_link_reads_the_pdf_behind_each_item(site, dirs):
+    from .test_numbered import make_pdf
+
+    config_dir, data_dir = dirs
+    site.add("https://gov.test/gazette", '<html><body><div class="views-row"><h2><a href="/res/issue-10-part-1">'
+             'Gazette, Vol. 47, Issue 10, Part 1 (October 2026)</a></h2></div></body></html>')
+    site.add("https://gov.test/res/issue-10-part-1", '<html><body><h1>Issue 10</h1>'
+             '<a href="/files/2026-11/gazette%2010%20part%201.pdf">Download</a></body></html>')
+    site.add("https://gov.test/files/2026-11/gazette%2010%20part%201.pdf",
+             make_pdf(["NORTHWEST TERRITORIES GAZETTE", "Notice under the Mineral Resources Act"]), "application/pdf")
+    write_sources(config_dir, "s.yaml", [{
+        "id": "gz", "kind": "listing", "url": "https://gov.test/gazette", "item": "div.views-row",
+        "fields": {"title": {"sel": "h2 a"}, "link": {"sel": "h2 a", "attr": "href"}},
+        "doc_type": "gazette", "document_link": 'a[href$=".pdf"]', "full_text": "always",
+    }])
+    asyncio.run(Worker(config_dir, data_dir, transport=site.transport).run_once())
+    row = db.connect(db.db_path(data_dir)).execute("SELECT * FROM items").fetchone()
+    assert row["doc_type"] == "gazette" and row["state"] == "enriched"
+    assert "Mineral Resources Act" in row["content_text"]
+    assert "gazette%2010%20part%201.pdf" in row["content_html"]

@@ -10,10 +10,15 @@ import asyncio
 import logging
 import sqlite3
 from dataclasses import dataclass
+from html import escape
+from urllib.parse import urljoin
+
+from selectolax.lexbor import LexborHTMLParser
 
 from ..config import Config
 from ..db import tx
 from ..extract.article import extract_article
+from ..extract.document import looks_like_pdf, pdf_text
 from ..extract.paywall import archive_url, detect
 from ..fetch.http import Fetcher
 from ..models import NetworkError, SourceError
@@ -21,6 +26,7 @@ from ..timeutil import iso_ago
 
 log = logging.getLogger(__name__)
 HTML_ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"
+PDF_MAX_BYTES = 60_000_000
 MAX_ATTEMPTS = 3
 _cpu = asyncio.Semaphore(1)
 
@@ -63,9 +69,10 @@ async def _one(conn: sqlite3.Connection, fetcher: Fetcher, cfg: Config, r: sqlit
     stats.checked += 1
     s = cfg.sources.get(r["source_id"])
     mode = getattr(s, "full_text", "auto") if s else "auto"
+    doc_link = ((s.model_extra or {}).get("document_link") if s else None) or None
     need = (
         r["url"]
-        and r["doc_type"] == "article"
+        and (r["doc_type"] == "article" or doc_link)
         and mode != "never"
         and (mode == "always" or (r["word_count"] or 0) < cfg.settings.extract.min_words)
     )
@@ -82,9 +89,27 @@ async def _one(conn: sqlite3.Connection, fetcher: Fetcher, cfg: Config, r: sqlit
         stats.failed += 1
         return
     stats.fetched += 1
+    if looks_like_pdf(resp.content):
+        await _use_pdf(conn, r, resp.content, resp.url, stats)
+        return
     if "html" not in resp.content_type:
         _set(conn, r["id"], state="enriched")
         return
+    if doc_link:
+        href = _find_link(resp.content, doc_link)
+        if href:
+            pdf_url = urljoin(resp.url, href)
+            try:
+                pdf = await fetcher.get(pdf_url, accept="application/pdf,*/*;q=0.5", max_bytes=PDF_MAX_BYTES)
+            except SourceError as e:
+                log.info("%s: document %s: %s", r["source_id"], pdf_url, e)
+                _set(conn, r["id"], state="enriched", error=str(e)[:500])
+                stats.failed += 1
+                return
+            if looks_like_pdf(pdf.content):
+                await _use_pdf(conn, r, pdf.content, pdf.url, stats)
+                return
+        log.info("%s: no document link (%s) on %s; using the page text", r["source_id"], doc_link, resp.url)
     page = resp.content.decode(_charset(resp.headers.get("content-type", "")), "replace")
     async with _cpu:  # trafilatura sniffs the encoding itself when given bytes
         ext = await asyncio.to_thread(extract_article, resp.content, resp.url)
@@ -98,6 +123,26 @@ async def _one(conn: sqlite3.Connection, fetcher: Fetcher, cfg: Config, r: sqlit
                       content_hash=_hash(ext.text))
         if not r["author"] and ext.author:
             fields["author"] = ext.author
+        stats.improved += 1
+    _set(conn, r["id"], **fields)
+
+
+def _find_link(html: bytes, selector: str) -> str | None:
+    try:
+        node = LexborHTMLParser(html.decode("utf-8", "replace")).css_first(selector)
+    except Exception:  # noqa: BLE001 — a bad selector in config shouldn't stop enrichment
+        return None
+    return (node.attributes.get("href") or "").strip() or None if node else None
+
+
+async def _use_pdf(conn: sqlite3.Connection, r: sqlite3.Row, content: bytes, url: str, stats: EnrichStats) -> None:
+    async with _cpu:
+        doc = await asyncio.to_thread(pdf_text, content)
+    link = f'<p><a href="{escape(url)}">Open the PDF</a></p>'
+    words = len(doc.text.split())
+    fields: dict[str, object] = {"state": "enriched", "content_html": link + doc.html}
+    if words:
+        fields.update(content_text=doc.text, word_count=words, content_hash=_hash(doc.text))
         stats.improved += 1
     _set(conn, r["id"], **fields)
 

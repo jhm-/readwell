@@ -14,6 +14,8 @@
       removal_grace_runs: 2
       full_text: auto            # fetch each item's own page for its text (auto | always | never)
       pages: {template: "{url}?page={page}", max: 10}   # optional: follow numbered pages
+      doc_type: gazette          # optional; default article
+      document_link: 'a[href$=".pdf"]'   # optional: on each item's page, follow this link and read the PDF
 
 With ``pages``, page 2, 3, … are fetched until a page adds no new items or ``max`` is
 reached. Inventory mode needs every page, so removals are only judged on complete runs.
@@ -65,6 +67,8 @@ class ListingCfg(BaseModel):
     min_items: int = 1
     pages: PagesCfg | None = None
     title_template: str | None = None  # e.g. "Alberta OIC {number} — {title}" (any field names)
+    doc_type: str = "article"
+    document_link: str | None = None  # read by the enrichment pass
 
 
 def _get(node: LexborNode, spec: FieldSpec, base_url: str) -> str | None:
@@ -119,6 +123,7 @@ def extract_items(html: str | bytes, page_url: str, c: ListingCfg) -> list[RawIt
             author=vals.get("author"),
             published_at=parse_date(vals.get("date")),
             summary_html=f"<p>{summary}</p>" if summary and "<" not in summary else summary,
+            doc_type=c.doc_type,
         ))
     return items
 
