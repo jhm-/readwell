@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import __version__, db
 from .config import ConfigError, default_config_dir, default_data_dir, load_config
-from .discovery import discover
+from .discovery import discover, parse_feed
 from .fetch.http import Fetcher
 from .models import SourceError
 
@@ -66,7 +66,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     print(f"sources: {len(cfg.sources)}  config errors: {len(cfg.errors)}")
     for e in cfg.errors:
         print(f"  ! {e}")
-    todo = [s for s in cfg.sources.values() if not args.ids or s.id in args.ids]
+    todo = [s for s in cfg.sources.values() if (s.enabled or args.ids) and (not args.ids or s.id in args.ids)]
     # snappier than the worker: shorter per-request timeout, and a cap per source
     fetch_cfg = cfg.settings.fetch.model_copy(update={"timeout_s": min(cfg.settings.fetch.timeout_s, 15.0)})
     print(f"checking {len(todo)} sources (each result prints as it finishes; at most {args.timeout:.0f} s per source)\n",
@@ -79,7 +79,16 @@ def cmd_check(args: argparse.Namespace) -> int:
                 if not s.implemented:
                     return s, "skip", f"kind '{s.kind}' not built yet"
                 if s.feed_url:
-                    return s, "ok", f"{s.feed_url} (set in config)"
+                    try:
+                        r = await asyncio.wait_for(f.get(s.feed_url), timeout=args.timeout)
+                    except TimeoutError:
+                        return s, "FAIL", f"feed_url timed out after {args.timeout:.0f} s"
+                    except SourceError as e:
+                        return s, "FAIL", f"feed_url: {e}"
+                    d = parse_feed(r.content, r.url, r.content_type)
+                    if d is None:
+                        return s, "FAIL", f"feed_url is not a feed ({r.content_type or 'unknown type'})"
+                    return s, "ok", f"{s.feed_url}  [{d.get('version')}, {len(d.entries)} entries, set in config]"
                 try:
                     found = await asyncio.wait_for(discover(f, s.url, limit=1), timeout=args.timeout)
                 except TimeoutError:

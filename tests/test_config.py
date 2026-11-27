@@ -66,3 +66,10 @@ def test_fingerprint_changes_on_edit(dirs):
     before = fingerprint(config_dir)
     write_sources(config_dir, "new.yaml", [{"id": "n", "url": "https://n.example/"}])
     assert fingerprint(config_dir) != before
+
+
+def test_yaml_boolean_id_gets_a_helpful_message(dirs):
+    config_dir, data_dir = dirs
+    (config_dir / "sources" / "a.yaml").write_text("- {id: off, url: 'https://x.example/'}\n")
+    cfg = load_config(config_dir, data_dir)
+    assert not cfg.sources and "quotes" in cfg.errors[0]
