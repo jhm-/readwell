@@ -1,0 +1,17 @@
+# A page with no feed, described by CSS selectors (relative to each item; "." is the item).
+id: example-assets
+name: Example assets for sale
+kind: listing
+mode: inventory               # stream (news-like) | inventory (a catalogue)
+url: https://example.com/assets-for-sale
+item: "div.listing-card"
+fields:
+  title:   { sel: "h3" }
+  link:    { sel: "a", attr: href }
+  date:    { sel: "time", attr: datetime, optional: true }
+  summary: { sel: "p.excerpt", optional: true }
+report_removals: true         # publish "Removed from listing: …" when an item disappears
+removal_grace_runs: 2
+full_text: auto               # fetch each item's page for its full text
+interval_min: 360
+filter: { mode: llm }

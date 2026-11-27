@@ -10,6 +10,7 @@ from ..discovery import discover, parse_feed
 from ..fetch.http import Fetcher
 from ..models import DiscoveryError, FetchResult, NetworkError, ParseError, RawItem
 from ..timeutil import struct_to_iso
+from .base import SourceContext, register
 
 DISCOVERY_BUDGET_S = 180  # a slow or tarpitting site shouldn't hold a worker slot for many minutes
 
@@ -66,6 +67,12 @@ async def fetch(
         feed_title=(d.feed.get("title") or None),
         site_url=(d.feed.get("link") or None),
     )
+
+
+@register("feed")
+async def fetch_feed(ctx: SourceContext) -> FetchResult:
+    return await fetch(ctx.fetcher, ctx.source, resolved_url=ctx.row["resolved_url"], etag=ctx.row["etag"],
+                       last_modified=ctx.row["last_modified"])
 
 
 def _entry(e) -> RawItem:  # e: feedparser entry

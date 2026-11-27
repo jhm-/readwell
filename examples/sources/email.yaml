@@ -1,0 +1,20 @@
+# Newsletters and alerts by email. The mailbox is opened read-only (nothing is deleted,
+# moved or marked read). The password comes from the environment, never from YAML:
+#   /etc/readwell/env:   READWELL_IMAP_PASSWORD='...'
+# Several email sources can share a mailbox and split it by sender; the one with "*"
+# takes whatever the others don't claim.
+sources:
+  - id: substacks
+    name: Substack newsletters
+    kind: email
+    imap: { host: mail.example.net, port: 993, user: news@example.net, password_env: READWELL_IMAP_PASSWORD }
+    from: ["*@substack.com"]
+    interval_min: 15
+
+  - id: newsletters
+    name: Other newsletters
+    kind: email
+    imap: { host: mail.example.net, port: 993, user: news@example.net, password_env: READWELL_IMAP_PASSWORD }
+    from: ["*"]
+    since_days: 14            # first run looks back this far
+    interval_min: 15

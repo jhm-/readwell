@@ -21,7 +21,7 @@ def setup_sources(site, config_dir):
         {"id": "example-news", "name": "Example News", "url": "https://news.example.com/"},
         {"id": "other-outlet", "name": "Other Outlet", "feed_url": "https://other.example.org/atom"},
         {"id": "broken", "url": "https://broken.example.net/"},
-        {"id": "later", "kind": "listing", "url": "https://later.example.net/"},
+        {"id": "later", "kind": "documents", "url": "https://later.example.net/"},
     ]})
 
 

@@ -33,10 +33,11 @@ class IngestStats:
     new: int = 0
     known: int = 0
     clustered: int = 0
+    removed: int = 0
 
 
 def ingest(conn: sqlite3.Connection, source_id: str, raws: list[RawItem], cfg: DedupeCfg,
-           *, now: str | None = None) -> IngestStats:
+           *, now: str | None = None, initial_state: str = "normalized") -> IngestStats:
     now = now or now_iso()
     stats = IngestStats(fetched=len(raws))
     seen_guids: set[str] = set()
@@ -50,7 +51,7 @@ def ingest(conn: sqlite3.Connection, source_id: str, raws: list[RawItem], cfg: D
                 stats.known += 1
                 continue
             cluster_with = _find_cluster_match(conn, source_id, item, cfg, now)
-            item_id = _insert(conn, source_id, item, now)
+            item_id = _insert(conn, source_id, item, now, initial_state)
             if cluster_with is not None:
                 _join_cluster(conn, cluster_with, item_id, now)
                 stats.clustered += 1
@@ -113,16 +114,17 @@ def _find_cluster_match(conn: sqlite3.Connection, source_id: str, item: Normaliz
     return None
 
 
-def _insert(conn: sqlite3.Connection, source_id: str, item: Normalized, now: str) -> int:
+def _insert(conn: sqlite3.Connection, source_id: str, item: Normalized, now: str,
+            state: str = "normalized") -> int:
     cur = conn.execute(
         """INSERT INTO items (source_id, guid, url, canonical_url, title, author, published_at,
                               first_seen_at, last_seen_at, summary, content_html, content_text, word_count,
                               content_hash, title_key, doc_type, state)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'normalized')""",
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             source_id, item.guid, item.url, item.canonical_url, item.title, item.author, item.published_at,
             now, now, item.summary, item.content_html, item.content_text, item.word_count, item.content_hash,
-            item.title_key, item.doc_type,
+            item.title_key, item.doc_type, state,
         ),
     )
     return int(cur.lastrowid)
@@ -136,6 +138,49 @@ def _join_cluster(conn: sqlite3.Connection, existing_id: int, new_id: int, now: 
                                       (existing_id, now)).lastrowid)
         conn.execute("UPDATE items SET cluster_id = ?, is_lead = 1 WHERE id = ?", (cluster_id, existing_id))
     conn.execute("UPDATE items SET cluster_id = ?, is_lead = 0 WHERE id = ?", (cluster_id, new_id))
+
+
+def mark_removals(conn: sqlite3.Connection, source_id: str, present: set[str], source) -> int:
+    """Inventory listings: note items that have disappeared from the page.
+
+    An item must be missing for ``removal_grace_runs`` consecutive fetches (default 2) before it
+    counts as removed, so a flaky page doesn't produce false "removed" entries. With
+    ``report_removals: true`` a short "Removed from listing" entry is published.
+    """
+    extra = source.model_extra or {}
+    grace = int(extra.get("removal_grace_runs", 2))
+    report = bool(extra.get("report_removals", False))
+    now = now_iso()
+    removed = 0
+    with tx(conn):
+        rows = conn.execute(
+            "SELECT id, guid, title, url, missing_runs FROM items"
+            " WHERE source_id = ? AND removed_at IS NULL AND doc_type != 'removal'",
+            (source_id,),
+        ).fetchall()
+        for r in rows:
+            if r["guid"] in present:
+                if r["missing_runs"]:
+                    conn.execute("UPDATE items SET missing_runs = 0 WHERE id = ?", (r["id"],))
+                continue
+            missing = r["missing_runs"] + 1
+            if missing < grace:
+                conn.execute("UPDATE items SET missing_runs = ? WHERE id = ?", (missing, r["id"]))
+                continue
+            conn.execute("UPDATE items SET missing_runs = ?, removed_at = ? WHERE id = ?", (missing, now, r["id"]))
+            removed += 1
+            if report:
+                title = f"Removed from listing: {r['title'] or r['guid']}"
+                body = (f"<p>This item is no longer listed by <b>{source.display_name}</b> "
+                        f"(sold, withdrawn or expired).</p>")
+                conn.execute(
+                    """INSERT OR IGNORE INTO items (source_id, guid, url, canonical_url, title, first_seen_at,
+                           last_seen_at, content_html, content_text, word_count, doc_type, state)
+                       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'removal', 'enriched')""",
+                    (source_id, "removed:" + r["guid"], r["url"], title, now, now, body, title,
+                     len(title.split())),
+                )
+    return removed
 
 
 def purge_old_content(conn: sqlite3.Connection, days: int) -> int:

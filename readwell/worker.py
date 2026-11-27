@@ -32,8 +32,9 @@ from .config import (
 )
 from .fetch.http import Fetcher
 from .models import FetchResult, HttpError, SourceError
-from .pipeline.store import IngestStats, ingest, purge_old_content
-from .sources import feed as feed_source
+from .pipeline.enrich import enrich_pending
+from .pipeline.store import IngestStats, ingest, mark_removals, purge_old_content
+from .sources import REGISTRY, SourceContext
 from .timeutil import now, now_iso, to_iso
 
 log = logging.getLogger(__name__)
@@ -154,13 +155,9 @@ async def run_source(conn: sqlite3.Connection, fetcher: Fetcher, cfg: Config, s:
     run_id = conn.execute("INSERT INTO runs (source_id, started_at) VALUES (?, ?)", (s.id, started)).lastrowid
 
     try:
-        if s.kind == "feed":
-            result: FetchResult = await feed_source.fetch(
-                fetcher, s, resolved_url=row["resolved_url"], etag=row["etag"], last_modified=row["last_modified"]
-            )
-        else:  # pragma: no cover - guarded by s.implemented
-            raise SourceError(f"kind {s.kind} not implemented")
-        if not result.not_modified and not result.items and (row["typical_count"] or 0) >= 5:
+        result: FetchResult = await REGISTRY[s.kind](SourceContext(fetcher, cfg, s, row))
+        if (result.expect_items and not result.not_modified and not result.items
+                and (row["typical_count"] or 0) >= 5):
             err = SourceError(f"feed returned no items (usually {row['typical_count']}) — it may have moved")
             err.kind = "empty"
             raise err
@@ -173,7 +170,10 @@ async def run_source(conn: sqlite3.Connection, fetcher: Fetcher, cfg: Config, s:
 
     stats = None
     if not result.not_modified:
-        stats = ingest(conn, s.id, result.items, cfg.settings.dedupe)
+        stats = ingest(conn, s.id, result.items, cfg.settings.dedupe,
+                       initial_state="baseline" if result.baseline else "normalized")
+        if result.present_guids is not None:
+            stats.removed = mark_removals(conn, s.id, result.present_guids, s)
 
     count = len(result.items)
     typical = row["typical_count"]
@@ -187,12 +187,13 @@ async def run_source(conn: sqlite3.Connection, fetcher: Fetcher, cfg: Config, s:
                    etag = ?, last_modified = ?, typical_count = ?,
                    resolved_url = COALESCE(?, resolved_url),
                    resolved_at = CASE WHEN ? IS NOT NULL THEN ? ELSE resolved_at END,
-                   title = COALESCE(?, title), site_url = COALESCE(?, site_url), next_run_at = ?
+                   title = COALESCE(?, title), site_url = COALESCE(?, site_url), next_run_at = ?,
+                   cursor = COALESCE(?, cursor), baseline_done = 1
                WHERE id = ?""",
             (
                 finished, finished, result.http_status, result.etag, result.last_modified, typical,
                 result.resolved_url, result.resolved_url, finished, result.feed_title, result.site_url,
-                _next_run(s.interval_min, 0, cfg.settings.fetch.max_backoff_hours, None), s.id,
+                _next_run(s.interval_min, 0, cfg.settings.fetch.max_backoff_hours, None), result.cursor, s.id,
             ),
         )
         conn.execute(
@@ -276,7 +277,13 @@ class Worker:
         else:
             todo = [s for s in cfg.sources.values() if s.enabled and s.implemented]
         async with Fetcher(cfg.settings.fetch, self.transport) as fetcher:
-            return await run_sources(self.conn, fetcher, cfg, todo)
+            outcomes = await run_sources(self.conn, fetcher, cfg, todo)
+            ids = [s.id for s in todo]
+            for _ in range(50):  # finish enriching what we just fetched
+                es = await enrich_pending(self.conn, fetcher, cfg, limit=100, source_ids=ids)
+                if not es.checked:
+                    break
+            return outcomes
 
     def _maybe_purge(self, cfg: Config) -> None:
         today = now_iso()[:10]
@@ -322,6 +329,10 @@ class Worker:
                         new = sum(o.stats.new for o in outcomes if o.stats)
                         errs = sum(1 for o in outcomes if o.status == "error")
                         log.info("ran %d sources: %d new items, %d errors", len(outcomes), new, errs)
+                    es = await enrich_pending(self.conn, fetcher, cfg)
+                    if es.checked:
+                        log.info("enriched %d items: %d pages fetched, %d improved, %d paywalled, %d failed",
+                                 es.checked, es.fetched, es.improved, es.paywalled, es.failed)
                     self._maybe_purge(cfg)
                 except Exception:  # keep the loop alive; systemd restarts us only on a crash
                     log.exception("worker tick failed")

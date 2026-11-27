@@ -51,6 +51,23 @@ def _source_name(cfg: Config, source_id: str) -> str:
     return s.display_name if s else source_id
 
 
+def _best_body(conn: sqlite3.Connection, item: sqlite3.Row) -> str:
+    """The lead's body, unless a duplicate elsewhere carries much more of the story.
+
+    E.g. a paid Substack post: the RSS copy is a teaser, the emailed copy is complete.
+    """
+    body, words = item["content_html"] or "", item["word_count"] or 0
+    if item["cluster_id"] is not None:
+        r = conn.execute(
+            "SELECT content_html, word_count FROM items WHERE cluster_id = ? AND id != ? AND content_html IS NOT NULL"
+            " ORDER BY word_count DESC LIMIT 1",
+            (item["cluster_id"], item["id"]),
+        ).fetchone()
+        if r and (r["word_count"] or 0) > max(1.5 * words, words + 100):
+            return r["content_html"]
+    return body
+
+
 def _entry_html(conn: sqlite3.Connection, cfg: Config, item: sqlite3.Row) -> str:
     src = escape(_source_name(cfg, item["source_id"]))
     meta = [src]
@@ -58,8 +75,11 @@ def _entry_html(conn: sqlite3.Connection, cfg: Config, item: sqlite3.Row) -> str
     if also:
         links = ", ".join(f'<a href="{escape(u)}">{escape(n)}</a>' if u else escape(n) for n, u in also)
         meta.append(f"also in: {links}")
+    if item["paywall"] == "hard":
+        arch = item["archive_url"]
+        meta.append("🔒 paywalled" + (f' — <a href="{escape(arch)}">archive.today copy</a>' if arch else ""))
     header = f'<p style="font-size:smaller;color:#666">{" · ".join(meta)}</p>'
-    body = item["content_html"] or ""
+    body = _best_body(conn, item)
     footer = ""
     if item["url"]:
         host = urlsplit(item["url"]).hostname or item["url"]
@@ -94,8 +114,14 @@ def _add_item(fg: FeedGenerator, conn: sqlite3.Connection, cfg: Config, item: sq
 def items_feed(conn: sqlite3.Connection, cfg: Config, self_url: str, *, source_id: str | None = None) -> bytes:
     fs = cfg.settings.feeds
     cutoff = to_iso(now() - timedelta(days=fs.max_age_days))
-    where = ["s.in_config = 1", f"{_sort_date_sql()} >= ?"]
-    params: list[object] = [cutoff]
+    where = [
+        "s.in_config = 1",
+        f"{_sort_date_sql()} >= ?",
+        "i.state != 'baseline'",
+        # hold new items back until their full text is in, but never more than 30 minutes
+        "(i.state != 'normalized' OR i.first_seen_at < ?)",
+    ]
+    params: list[object] = [cutoff, to_iso(now() - timedelta(minutes=30))]
     if source_id:
         where.append("i.source_id = ?")
         params.append(source_id)

@@ -29,6 +29,10 @@ class FetchResult:
     resolved_url: str | None = None  # set when discovery found (or re-found) the feed
     feed_title: str | None = None
     site_url: str | None = None
+    cursor: str | None = None  # numbered/email sources: where to resume next run
+    baseline: bool = False  # store these items without publishing them (first run of an inventory)
+    present_guids: set[str] | None = None  # inventory listings: everything currently on the page
+    expect_items: bool = True  # False for sources where "nothing new" is normal (numbered, email)
 
 
 class SourceError(Exception):

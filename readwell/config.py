@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 log = logging.getLogger(__name__)
 
 SOURCE_KINDS = {"feed", "listing", "numbered", "documents", "email"}
-IMPLEMENTED_KINDS = {"feed"}
+IMPLEMENTED_KINDS = {"feed", "email", "numbered", "listing"}
 
 
 # --------------------------------------------------------------------------- settings
@@ -68,6 +68,12 @@ class FeedsCfg(_Strict):
     max_age_days: int = 30
 
 
+class ExtractCfg(_Strict):
+    min_words: int = 150      # fetch the page when the feed body is shorter than this
+    batch: int = 30           # items enriched per worker tick
+    max_age_days: int = 3     # older unenriched items are skipped (they'd barely show anyway)
+
+
 class HealthCfg(_Strict):
     failure_threshold: int = 5
 
@@ -92,6 +98,7 @@ class Settings(BaseModel):
     worker: WorkerCfg = Field(default_factory=WorkerCfg)
     feeds: FeedsCfg = Field(default_factory=FeedsCfg)
     health: HealthCfg = Field(default_factory=HealthCfg)
+    extract: ExtractCfg = Field(default_factory=ExtractCfg)
     dedupe: DedupeCfg = Field(default_factory=DedupeCfg)
     retention: RetentionCfg = Field(default_factory=RetentionCfg)
 
@@ -118,6 +125,7 @@ class SourceCfg(BaseModel):
     filter: FilterCfg = Field(default_factory=FilterCfg)
     deliver_to: list[str] = Field(default_factory=list)
     previous_ids: list[str] = Field(default_factory=list)  # rename: carry history over from these ids
+    full_text: Literal["auto", "always", "never"] = "auto"  # fetch the article page for its full text
     note: str | None = None
     check: bool = False
 
@@ -271,7 +279,7 @@ def load_config(config_dir: Path | None = None, data_dir: Path | None = None) ->
                 ident = entry.get("id", f"entry #{n}")
                 errors.append(f"{rel} [{ident}]: {e.errors()[0]['msg']}")
                 continue
-            if s.kind == "feed" and not (s.url or s.feed_url):
+            if s.kind in ("feed", "listing") and not (s.url or s.feed_url):
                 errors.append(f"{rel} [{s.id}]: feed sources need 'url' or 'feed_url'")
                 continue
             if s.id in sources:
