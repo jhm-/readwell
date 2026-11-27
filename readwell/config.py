@@ -90,8 +90,48 @@ class RetentionCfg(_Strict):
     backups_keep: int = 14
 
 
+class LlmCfg(_Strict):
+    """Which LLM screens items. The API format is pluggable (screen/llm.py BACKENDS):
+
+    - anthropic: the Anthropic Messages API — Claude, or a Claude-to-Gemini proxy such as the
+      one on the Pi (base_url: http://192.168.1.100:8082). A proxy like that picks the real model.
+    - gemini:    Gemini's own API (direct to Google, or a proxy that forwards it)
+    - openai:    OpenAI-compatible chat completions — OpenAI, xAI Grok, OpenRouter, Ollama, ...
+    - none:      no LLM; items wait as 'deferred'
+    """
+
+    backend: Literal["anthropic", "gemini", "openai", "none"] = "anthropic"
+    model: str = "gemini-3.1-flash-lite"
+    base_url: str | None = None  # default: the provider's own API endpoint
+    api_key_env: str = "READWELL_LLM_KEY"  # env var holding the key; unset is fine for a keyless proxy
+    thinking_level: str | None = "minimal"  # gemini backend; dropped automatically if the model rejects it
+    max_output_tokens: int = 4096
+    price_in_per_m: float = 0.25   # USD per 1M input tokens
+    price_out_per_m: float = 1.50  # USD per 1M output tokens (thinking tokens are billed as output)
+    daily_budget_usd: float = 1.00
+    budget_tz: str = "America/Vancouver"  # when "today" starts for the budget
+    batch_size: int = 10
+    max_words: int = 600       # text sent per article
+    doc_max_words: int = 1200  # per OIC / gazette / document
+    timeout_s: float = 90.0
+    max_batches_per_tick: int = 6
+
+
+class ScreenCfg(_Strict):
+    prefilter_floor: float = 0.15    # an item reaches the LLM if any topic's keyword score is at least this
+    keyword_threshold: float = 0.3   # filter mode 'keywords': score needed to land in a topic
+    max_age_days: int = 3            # don't screen items older than this (they've left the feeds anyway)
+    feedback_examples: int = 4       # 👍 and 👎 examples per topic shown to the LLM
+    summarize_doc_types: list[str] = Field(default_factory=lambda: ["oic", "gazette"])
+
+
+class SupernoteCfg(_Strict):
+    dir: str = "/mnt/Data/Supernote/Document/Saved Articles"
+    page_size: str = "Letter"        # any CSS page size, e.g. "A5" or "157mm 210mm"
+
+
 class Settings(BaseModel):
-    model_config = ConfigDict(extra="allow")  # later phases add sections (llm, exchange, ...)
+    model_config = ConfigDict(extra="allow")  # later phases add sections (exchange, ...)
 
     server: ServerCfg = Field(default_factory=ServerCfg)
     fetch: FetchCfg = Field(default_factory=FetchCfg)
@@ -101,14 +141,26 @@ class Settings(BaseModel):
     extract: ExtractCfg = Field(default_factory=ExtractCfg)
     dedupe: DedupeCfg = Field(default_factory=DedupeCfg)
     retention: RetentionCfg = Field(default_factory=RetentionCfg)
+    llm: LlmCfg = Field(default_factory=LlmCfg)
+    screen: ScreenCfg = Field(default_factory=ScreenCfg)
+    supernote: SupernoteCfg = Field(default_factory=SupernoteCfg)
 
 
 # --------------------------------------------------------------------------- sources
 
 
 class FilterCfg(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    """How a source's items are screened. See README, "Per-source filtering"."""
+
+    model_config = ConfigDict(extra="forbid")
     mode: Literal["topics", "llm", "keywords", "none"] = "topics"
+    topics: Literal["all"] | list[str] = "all"   # screen only against these topics
+    threshold: float | None = None               # override every topic's threshold for this source
+    keywords_add: dict[str, list[str]] = Field(default_factory=dict)  # extra prefilter terms per topic
+    mute: list[str] = Field(default_factory=list)  # drop items matching these words or /regex/
+    max_per_day: int | None = None               # keep only the N best-scoring items per day
+    note: str | None = None                      # one line of context given to the LLM
+    summarize: bool | None = None                # LLM writes a 2-3 sentence summary (default: OICs, gazettes)
 
 
 class SourceCfg(BaseModel):
@@ -174,6 +226,8 @@ class Config:
     errors: list[str] = field(default_factory=list)
     raw_topics: Any = None
     raw_views: Any = None
+    topics: Any = None  # screen.topics.TopicSet
+    views: dict[str, Any] = field(default_factory=dict)  # id -> screen.topics.View
 
 
 class ConfigError(Exception):
@@ -290,7 +344,20 @@ def load_config(config_dir: Path | None = None, data_dir: Path | None = None) ->
     raw_topics = _safe_optional(config_dir / "topics.yaml", errors, config_dir)
     raw_views = _safe_optional(config_dir / "views.yaml", errors, config_dir)
 
-    cfg = Config(settings, sources, config_dir, fp, from_cache, errors, raw_topics, raw_views)
+    from .screen.topics import parse_topics, parse_views
+
+    topics = parse_topics(raw_topics, errors)
+    views = parse_views(raw_views, topics, errors)
+    for s in sources.values():
+        if isinstance(s.filter.topics, list):
+            unknown = [t for t in s.filter.topics if t not in topics.by_id]
+            if unknown:
+                errors.append(f"source {s.id}: filter.topics names unknown topic(s) {', '.join(unknown)}")
+        for v in s.deliver_to:
+            if v not in views:
+                errors.append(f"source {s.id}: deliver_to names unknown view {v!r}")
+
+    cfg = Config(settings, sources, config_dir, fp, from_cache, errors, raw_topics, raw_views, topics, views)
     if not from_cache:
         _refresh_cache(config_dir, cache_dir)
     for e in errors:

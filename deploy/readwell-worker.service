@@ -25,6 +25,8 @@ ProtectHome=yes
 ReadWritePaths=/var/lib/readwell
 # later phases write PDFs and exchange files to the NAS; '-' = fine if absent
 ReadWritePaths=-/mnt/Data/Readwell
+# Send to Supernote writes PDFs to Supernote/Document/Saved Articles
+ReadWritePaths=-/mnt/Data/Supernote
 
 [Install]
 WantedBy=multi-user.target

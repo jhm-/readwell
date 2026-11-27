@@ -2,7 +2,7 @@
 
 A self-hosted news reader backend. It turns websites, RSS feeds, government publications and email newsletters into clean Atom feeds, then uses an LLM to filter them down to the topics you care about. You read the results in any ordinary RSS reader.
 
-> **Status:** pre-alpha. Phase 1 (feeds, discovery, dedupe, `all.atom`, `health.atom`) works; filtering comes in Phase 3.
+> **Status:** pre-alpha. Phases 1–3 work: feeds, full text, official documents, email, LLM screening, views, feedback and send-to-PDF. The daily editor pass and the point-and-click Recipe Builder are next.
 
 ## What it does
 
@@ -50,15 +50,20 @@ Each source chooses how it's screened:
 
 Sources can also limit which topics they're screened against, override thresholds, add their own keywords, mute terms, or cap items per day. **Views** combine topics and sources into a single feed, for example "every topic match, plus everything tagged `general-interest`".
 
+**LLM backends** are pluggable by API format, so switching provider is a config change: `anthropic` (Claude, or a Claude-to-Gemini proxy), `gemini` (Gemini's own API), `openai` (OpenAI-compatible: OpenAI, xAI Grok, OpenRouter, Ollama and others), or `none`. Results are cached by content, so a re-fetch or a duplicate never pays twice, and editing a topic re-screens only what changed (`readwell rescreen`). OICs and gazettes also get a 2–3 sentence summary from the same call.
+
+**Feedback:** every entry ends with 👍/👎 links for its topics and a 📄 *Send to Supernote* link. The links are signed, so link-preview bots can't vote. A 👍 puts an item in that topic's feed, a 👎 takes it out, and both become examples the LLM sees next time.
+
 ## Output
 
 | Feed | Contents |
 |---|---|
-| `/feeds/topic/<id>.atom` | Items matching one topic |
+| `/feeds/topic/<id>.atom` | Items matching one topic, each with "Why it's here" |
 | `/feeds/view/<id>.atom` | A combined view |
 | `/feeds/all.atom` | Everything, de-duplicated and unfiltered |
 | `/feeds/rejected.atom` | What the filter turned down, for auditing |
-| `/feeds/health.atom` | Broken recipes, failing sources, budget events |
+| `/feeds/source/<id>.atom` | One source, for checking it |
+| `/feeds/health.atom` | Broken recipes, failing sources, LLM budget or key problems, failed PDF sends |
 | `/opml` | All of the above, for one-click import into a reader |
 
 Any RSS reader works, for example Fluent Reader or RSS Guard on Windows, or NetNewsWire or Reeder on Apple devices.
@@ -84,6 +89,8 @@ views.yaml           # combined output feeds
 
 Secrets (API keys, the mailbox password, cookie files) go in an environment file readable only by the service user, never in YAML.
 
+Useful commands: `readwell screening --test` (LLM connection, today's spend, matches per topic), `readwell rescreen --days 3` (after editing `topics.yaml`), and `readwell send <item id>`.
+
 ## Install (Arch Linux)
 
 ```bash
@@ -92,13 +99,14 @@ sudo bash ~/readwell-src/deploy/install.sh   # re-run any time to update
 readwell check                            # find every source's feed
 ```
 
-The script creates a `readwell` system user, installs into `/opt/readwell` with a uv-managed Python, keeps state in `/var/lib/readwell`, writes `/etc/readwell/env`, and enables `readwell-web`, `readwell-worker` and a nightly backup timer. It never runs `pacman` itself. If the config share isn't mounted, it prints the fstab line to add.
+The script creates a `readwell` system user, installs into `/opt/readwell` with a uv-managed Python, keeps state in `/var/lib/readwell`, writes `/etc/readwell/env`, and enables `readwell-web`, `readwell-worker` and a nightly backup timer. It never runs `pacman` itself; it tells you if a system library (such as `pango`) is missing. If the config share isn't mounted, it prints the fstab line to add.
 
 ## Requirements
 
 - Linux with systemd
 - Python 3.13+, managed by `uv`, so system Python upgrades can't break it
-- A Gemini API key (other LLM backends are pluggable)
+- An LLM endpoint: a Gemini, Anthropic or OpenAI-compatible API key, or a proxy that holds one
+- `pango` (for the send-to-PDF renderer, WeasyPrint)
 - Optional: Docker, for the headless browser used by JavaScript-heavy sites, and `ocrmypdf` for scanned PDFs
 
 ## Roadmap

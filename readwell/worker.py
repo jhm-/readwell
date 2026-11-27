@@ -34,7 +34,10 @@ from .fetch.http import Fetcher
 from .models import FetchResult, HttpError, SourceError
 from .pipeline.enrich import enrich_pending
 from .pipeline.store import IngestStats, ingest, mark_removals, purge_old_content
+from .screen.llm import Screener, make_screener
+from .screen.run import screen_pending
 from .sources import REGISTRY, SourceContext
+from .supernote import process_sends
 from .timeutil import now, now_iso, to_iso
 
 log = logging.getLogger(__name__)
@@ -245,10 +248,14 @@ async def run_sources(conn: sqlite3.Connection, fetcher: Fetcher, cfg: Config,
 
 class Worker:
     def __init__(self, config_dir: Path | None = None, data_dir: Path | None = None,
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None,
+                 llm_transport: httpx.AsyncBaseTransport | None = None):
         self.config_dir = config_dir or default_config_dir()
         self.data_dir = data_dir or default_data_dir()
         self.transport = transport
+        self.llm_transport = llm_transport or transport
+        self._screener: Screener | None = None
+        self._screener_cfg = None
         self.conn = db.open_db(self.data_dir)
         self.cfg: Config | None = None
         self._fp: str | None = None
@@ -272,6 +279,27 @@ class Worker:
             sync_sources(self.conn, cfg)
         return self.cfg
 
+    def screener(self, cfg: Config) -> Screener | None:
+        if self._screener_cfg != cfg.settings.llm:
+            old = self._screener
+            self._screener, self._screener_cfg = make_screener(cfg.settings.llm, self.llm_transport), cfg.settings.llm
+            if old is not None:
+                asyncio.get_running_loop().create_task(old.aclose())
+        return self._screener
+
+    async def screen(self, cfg: Config, *, max_batches: int | None = None) -> None:
+        st = await screen_pending(self.conn, cfg, self.screener(cfg), max_batches=max_batches)
+        if st:
+            log.info("screened %d items: %d by LLM (%d calls, $%.4f), %d cached, %d keywords, %d dropped,"
+                     " %d muted, %d passthrough, %d deferred, %d errors",
+                     st.checked, st.llm_items, st.llm_calls, st.cost_usd, st.cached, st.keywords, st.dropped,
+                     st.muted, st.passthrough, st.deferred, st.errors)
+
+    async def close(self) -> None:
+        if self._screener is not None:
+            await self._screener.aclose()
+            self._screener = None
+
     async def run_once(self, source_ids: list[str] | None = None) -> list[RunOutcome]:
         cfg = self.reload_if_changed()
         if source_ids:
@@ -288,7 +316,8 @@ class Worker:
                 es = await enrich_pending(self.conn, fetcher, cfg, limit=100, source_ids=ids)
                 if not es.checked:
                     break
-            return outcomes
+        await self.screen(cfg, max_batches=50)
+        return outcomes
 
     def _maybe_purge(self, cfg: Config) -> None:
         today = now_iso()[:10]
@@ -338,6 +367,8 @@ class Worker:
                     if es.checked:
                         log.info("enriched %d items: %d pages fetched, %d improved, %d paywalled, %d failed",
                                  es.checked, es.fetched, es.improved, es.paywalled, es.failed)
+                    await self.screen(cfg)
+                    await process_sends(self.conn, cfg)
                     self._maybe_purge(cfg)
                 except Exception:  # keep the loop alive; systemd restarts us only on a crash
                     log.exception("worker tick failed")
@@ -347,6 +378,7 @@ class Worker:
                     pass
         finally:
             await fetcher.aclose()
+            await self.close()
             log.info("worker stopped")
 
 

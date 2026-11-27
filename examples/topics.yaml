@@ -1,4 +1,4 @@
-# Topic profiles (used from Phase 3). Each item is scored 0-10 against every topic.
+# Topic profiles (Phase 3). Each item is scored 0-10 against every topic.
 # The LLM sees description + include + exclude (+ your 👍/👎 examples).
 # keywords only drive the cheap prefilter; they never decide the final verdict.
 

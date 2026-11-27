@@ -15,11 +15,18 @@ sources:
     feed_url: https://trade.example.com/rss.xml
     interval_min: 30
     tags: [trade]
-    filter: { mode: topics }    # topics | llm | keywords | none (Phase 3)
+    filter:
+      mode: topics              # topics (default) | llm | keywords | none
+      topics: [local-housing]   # screen only against these topics (default: all)
+      threshold: 7              # stricter than the topics' own thresholds for this noisy source
+      keywords_add: { local-housing: [secondary suite] }   # extra prefilter terms, this source only
+      mute: [sponsored, "/^Podcast:/"]                      # dropped before screening (words or /regex/)
+      max_per_day: 5            # keep only its 5 best matches per day
+      note: "trade press; mostly about builders"            # context given to the LLM
 
   - id: example-essays
     name: Example Essays
     url: https://essays.example.org/
     tags: [general-interest]
-    filter: { mode: none }      # unfiltered (Phase 3)
-    deliver_to: [main]          # always appears in the 'main' view (Phase 3)
+    filter: { mode: none }      # unfiltered: never screened
+    deliver_to: [main]          # always appears in the 'main' view

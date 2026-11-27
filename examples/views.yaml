@@ -1,10 +1,12 @@
-# Combined output feeds (used from Phase 3): /feeds/view/<id>.atom
+# Combined output feeds: /feeds/view/<id>.atom
+# A view collects topic matches, plus every item from the sources it names, from sources carrying
+# one of its tags, and from sources that list it in deliver_to.
 views:
   main:
-    name: Readwell — Main
-    topics: all            # every topic match ...
-    min_score: 6
+    name: Main
+    topics: all                # every topic match ...
+    # min_score: 7             # ... optionally stricter than each topic's own threshold
     tags: [general-interest]   # ... plus everything from sources tagged general-interest
   reading:
-    name: Readwell — Reading
+    name: Reading
     tags: [general-interest]

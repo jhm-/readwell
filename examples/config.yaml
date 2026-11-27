@@ -33,3 +33,37 @@ dedupe:
 retention:
   content_days: 90          # article bodies are dropped after this; titles, links and scores stay
   backups_keep: 14
+
+# --- Screening (Phase 3) ---------------------------------------------------
+# The LLM backend is pluggable; pick the API format your provider speaks.
+#   anthropic  Anthropic Messages API: Claude, or a Claude-to-Gemini proxy (set base_url)
+#   gemini     Gemini's own API (direct, or a proxy that forwards it)
+#   openai     OpenAI-compatible chat completions: OpenAI, xAI Grok, OpenRouter, Ollama, ...
+#   none       no LLM; items wait as "deferred"
+# The key, if the endpoint needs one, goes in /etc/readwell/env as READWELL_LLM_KEY=… (never here).
+llm:
+  backend: gemini
+  model: gemini-3.1-flash-lite
+  # base_url: http://192.168.1.100:8082   # a proxy; default is the provider's own endpoint
+  api_key_env: READWELL_LLM_KEY
+  thinking_level: minimal   # gemini backend only; dropped automatically if the model refuses it
+  max_output_tokens: 4096
+  price_in_per_m: 0.25      # USD per 1M input tokens — set to your model's price
+  price_out_per_m: 1.50     # USD per 1M output tokens (thinking tokens count as output)
+  daily_budget_usd: 1.00    # hard cap; past it, items wait ("deferred") until tomorrow
+  budget_tz: America/Vancouver
+  batch_size: 10            # items per LLM call
+  max_words: 600            # text sent per article
+  doc_max_words: 1200       # per OIC / gazette / document
+  max_batches_per_tick: 6
+
+screen:
+  prefilter_floor: 0.15     # items with no topic keyword score at least this skip the LLM ("dropped")
+  keyword_threshold: 0.3    # sources with filter mode 'keywords' land in a topic at this score
+  max_age_days: 3           # older items aren't screened
+  feedback_examples: 4      # 👍 and 👎 examples per topic shown to the LLM
+  summarize_doc_types: [oic, gazette]   # these get a 2-3 sentence LLM summary
+
+supernote:                  # 📄 Send to Supernote
+  dir: /mnt/Data/Supernote/Document/Saved Articles
+  page_size: Letter         # any CSS page size: A5, "157mm 210mm", ...

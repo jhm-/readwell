@@ -88,13 +88,29 @@ if [[ ! -f $ETC_DIR/env ]]; then
 READWELL_CONFIG_DIR=$CONFIG_DIR
 READWELL_DATA_DIR=$DATA_DIR
 READWELL_BACKUP_DIR=$BACKUP_DIR
-# GEMINI_API_KEY=            # Phase 3
+# READWELL_LLM_KEY=          # only if the LLM endpoint needs a key (the Pi's Gemini proxy doesn't)
 EOF
     chown root:"$SVC_USER" "$ETC_DIR/env"
     chmod 640 "$ETC_DIR/env"
     echo "  created"
 else
     echo "  exists (left unchanged)"
+fi
+
+# ------------------------------------------------------------------ Send to Supernote
+step "Send to Supernote (PDF rendering)"
+if ldconfig -p 2>/dev/null | grep -q 'libpango-1.0.so' && fc-list 2>/dev/null | grep -qi 'dejavu\|noto'; then
+    echo "  pango and fonts found"
+else
+    warn "pango or a basic font is missing, so 📄 Send to Supernote can't make good PDFs. Install them with:
+      sudo pacman -S --needed pango ttf-dejavu
+    then re-run this script."
+fi
+SN_DIR="$NAS_MOUNT/Supernote/Document/Saved Articles"
+if as_svc test -d "$SN_DIR" -a -w "$SN_DIR" 2>/dev/null; then
+    echo "  $SN_DIR is writable"
+else
+    warn "$SN_DIR isn't there or isn't writable by $SVC_USER; PDFs will wait in the queue until it is"
 fi
 
 # ------------------------------------------------------------------ NAS config share
@@ -183,5 +199,6 @@ Readwell is running.
 Next:
   readwell check               find every source's feed (nothing is stored)
   readwell status              one line per source
+  readwell screening --test    check the LLM connection, spend and topic matches
   journalctl -u readwell-worker -f
 EOF

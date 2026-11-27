@@ -6,6 +6,9 @@
     readwell discover URL        show the feeds Readwell finds for a page
     readwell run-once [ID ...]   fetch sources now (all, or the given ids) and store items
     readwell status              one line per source
+    readwell screening [--test]  LLM spend, screening outcomes, topic match counts (--test: one LLM call)
+    readwell rescreen [--days N] screen recent items again after editing topics.yaml
+    readwell send ITEM_ID        make the Supernote PDF for one item now
     readwell migrate             create / upgrade the database
     readwell backup [DIR]        copy the database to DIR (default $READWELL_BACKUP_DIR)
 """
@@ -204,6 +207,108 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rescreen(args: argparse.Namespace) -> int:
+    """Screen recent items again, e.g. after editing topics.yaml (the cache keeps unchanged ones free)."""
+    from .screen.run import reset_for_rescreen
+    from .worker import Worker
+
+    w = Worker(args.config_dir, args.data_dir)
+    cfg = w.reload_if_changed()
+    n = reset_for_rescreen(w.conn, args.days, args.ids or None)
+    print(f"{n} item(s) from the last {args.days} day(s) queued for screening")
+
+    async def go() -> None:
+        try:
+            from .screen.run import screen_pending
+
+            st = await screen_pending(w.conn, cfg, w.screener(cfg), max_batches=args.max_batches)
+            print(f"screened {st.checked}: {st.llm_items} by LLM in {st.llm_calls} call(s) (${st.cost_usd:.4f}),"
+                  f" {st.cached} from cache, {st.keywords} by keywords, {st.dropped} dropped, {st.muted} muted,"
+                  f" {st.passthrough} passthrough, {st.deferred} deferred, {st.errors} error(s)")
+        finally:
+            await w.close()
+
+    asyncio.run(go())
+    return 0
+
+
+def cmd_screening(args: argparse.Namespace) -> int:
+    """Today's LLM spend, recent screening outcomes and topic match counts; --test makes one tiny call."""
+    from .screen.llm import ScreenInput, make_screener
+    from .screen.run import budget_day, cost, spent_today
+    from .timeutil import iso_ago
+    from .web import match
+
+    cfg = load_config(args.config_dir, args.data_dir)
+    conn = db.open_db(args.data_dir or default_data_dir())
+    llm = cfg.settings.llm
+    print(f"backend {llm.backend} · model {llm.model} · {llm.base_url or 'provider default URL'}")
+    print(f"budget day {budget_day(cfg)}: spent ${spent_today(conn, cfg):.4f} of ${llm.daily_budget_usd:.2f}")
+    print(f"topics: {len(cfg.topics.topics) if cfg.topics else 0} · views: {', '.join(cfg.views) or 'none'}")
+    print("\nlast 24 h:")
+    for r in conn.execute("SELECT COALESCE(screen_state, 'waiting') AS k, COUNT(*) AS n FROM items"
+                          " WHERE is_lead = 1 AND state != 'baseline' AND first_seen_at >= ? GROUP BY k ORDER BY n DESC",
+                          (iso_ago(days=1),)):
+        print(f"  {r['k']:12} {r['n']}")
+    rows = conn.execute("SELECT id, source_id FROM items WHERE is_lead = 1 AND screen_state = 'screened'"
+                        " AND first_seen_at >= ?", (iso_ago(days=7),)).fetchall()
+    sc = match.load_scores(conn, [r["id"] for r in rows])
+    counts: dict[str, int] = {}
+    for r in rows:
+        for t in match.matches(cfg, r["source_id"], sc[r["id"]]):
+            counts[t] = counts.get(t, 0) + 1
+    if cfg.topics and cfg.topics.topics:
+        print("\ntopic matches, last 7 days:")
+        for t in cfg.topics.topics:
+            print(f"  {t.id:28} {counts.get(t.id, 0)}")
+    if not args.test:
+        return 0
+    screener = make_screener(llm)
+    if screener is None:
+        print("\nLLM backend is 'none'; nothing to test")
+        return 1
+    if not cfg.topics or not cfg.topics.topics:
+        print("\nno topics to test against")
+        return 1
+
+    async def go() -> int:
+        try:
+            sample = ScreenInput("t", "Test", "Yukon government pauses new mineral staking near Dawson",
+                                 None, "The Government of Yukon paused quartz claim staking over 3,400 km2 "
+                                       "while the Dawson regional land use plan is completed.")
+            res, usage = await screener.screen([sample], cfg.topics.topics, cfg.topics.jurisdictions)
+        except Exception as e:  # noqa: BLE001 — this is a diagnostic; show whatever went wrong
+            print(f"\nLLM test FAILED: {e}")
+            return 1
+        finally:
+            await screener.aclose()
+        print(f"\nLLM test ok: {usage.input_tokens} in / {usage.output_tokens} out tokens, ${cost(cfg, usage):.5f}")
+        for r in res:
+            print(f"  scores {r.scores}\n  reason {r.reason}")
+        return 0
+
+    return asyncio.run(go())
+
+
+def cmd_send(args: argparse.Namespace) -> int:
+    """Make the Supernote PDF for one item now (its id is in feed entry ids: …item/<id>)."""
+    from .supernote import process_sends
+    from .timeutil import now_iso
+
+    cfg = load_config(args.config_dir, args.data_dir)
+    conn = db.open_db(args.data_dir or default_data_dir())
+    if conn.execute("SELECT 1 FROM items WHERE id = ?", (args.item_id,)).fetchone() is None:
+        print(f"no item {args.item_id}", file=sys.stderr)
+        return 1
+    with db.tx(conn):
+        conn.execute("INSERT INTO sends (item_id, requested_at) VALUES (?, ?)", (args.item_id, now_iso()))
+    asyncio.run(process_sends(conn, cfg))
+    r = conn.execute("SELECT path, error FROM sends WHERE item_id = ? ORDER BY id DESC LIMIT 1",
+                     (args.item_id,)).fetchone()
+    print(r["path"] or f"not sent: {r['error']}")
+    return 0 if r["path"] else 1
+
+
 def cmd_migrate(args: argparse.Namespace) -> int:
     conn = db.open_db(args.data_dir or default_data_dir())
     print(f"schema version {conn.execute('PRAGMA user_version').fetchone()[0]}")
@@ -250,6 +355,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("ids", nargs="*")
     sp.set_defaults(fn=cmd_run_once)
     sub.add_parser("status").set_defaults(fn=cmd_status)
+    sp = sub.add_parser("rescreen", help="screen recent items again (after editing topics.yaml)")
+    sp.add_argument("ids", nargs="*", help="only these sources")
+    sp.add_argument("--days", type=int, default=3)
+    sp.add_argument("--max-batches", type=int, default=100)
+    sp.set_defaults(fn=cmd_rescreen)
+    sp = sub.add_parser("screening", help="LLM spend, screening outcomes and topic match counts")
+    sp.add_argument("--test", action="store_true", help="also make one small LLM call to check the setup")
+    sp.set_defaults(fn=cmd_screening)
+    sp = sub.add_parser("send", help="make the Supernote PDF for one item now")
+    sp.add_argument("item_id", type=int)
+    sp.set_defaults(fn=cmd_send)
     sub.add_parser("migrate").set_defaults(fn=cmd_migrate)
     sp = sub.add_parser("backup")
     sp.add_argument("dest", nargs="?", type=Path)
