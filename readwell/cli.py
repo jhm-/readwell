@@ -221,7 +221,8 @@ def cmd_rescreen(args: argparse.Namespace) -> int:
         try:
             from .screen.run import screen_pending
 
-            st = await screen_pending(w.conn, cfg, w.screener(cfg), max_batches=args.max_batches)
+            st = await screen_pending(w.conn, cfg, w.screener(cfg), max_batches=args.max_batches,
+                                      max_age_days=args.days)
             print(f"screened {st.checked}: {st.llm_items} by LLM in {st.llm_calls} call(s) (${st.cost_usd:.4f}),"
                   f" {st.cached} from cache, {st.keywords} by keywords, {st.dropped} dropped, {st.muted} muted,"
                   f" {st.passthrough} passthrough, {st.deferred} deferred, {st.errors} error(s)")

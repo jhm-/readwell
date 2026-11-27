@@ -230,3 +230,20 @@ def test_prompt_carries_feedback_examples():
                                 {"tenure": [Example(1, "Staking ban", "Yukon News"), Example(-1, "Gold price", "X")]})
     assert 'relevant: "Staking ban" (Yukon News)' in system and 'NOT relevant: "Gold price"' in system
     assert '"source_note": "trade press"' in user and '"published": "2026-11-26"' in user
+
+
+def test_rescreen_reaches_past_the_normal_window(site, dirs):
+    from readwell import cli
+
+    config_dir, data_dir = dirs
+    setup(config_dir)
+    site.add("https://news.test/rss", rss([("Staking news", "claims")]), "application/rss+xml")
+    write_sources(config_dir, "s.yaml", [{"id": "news", "feed_url": "https://news.test/rss", "full_text": "never"}])
+    fake = FakeClaude()
+    asyncio.run(Worker(config_dir, data_dir, transport=site.transport, llm_transport=fake.transport).run_once())
+    conn = db.connect(db.db_path(data_dir))
+    with db.tx(conn):  # pretend it arrived 6 days ago
+        conn.execute("UPDATE items SET first_seen_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-6 days')")
+    # unchanged content comes from the cache, so no LLM is needed here
+    cli.main(["--config-dir", str(config_dir), "--data-dir", str(data_dir), "rescreen", "--days", "7"])
+    assert rows(data_dir)["Staking news"][0] == "screened" and len(fake.calls) == 1

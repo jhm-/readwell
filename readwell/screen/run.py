@@ -157,7 +157,8 @@ class _Job:
     version: str   # topic-set version (+ summary flag)
 
 
-def _pending(conn: sqlite3.Connection, cfg: Config, limit: int, item_ids: list[int] | None) -> list[sqlite3.Row]:
+def _pending(conn: sqlite3.Connection, cfg: Config, limit: int, item_ids: list[int] | None,
+             max_age_days: int | None = None) -> list[sqlite3.Row]:
     sql = ("SELECT i.* FROM items i JOIN sources s ON s.id = i.source_id"
            " WHERE s.in_config = 1 AND i.is_lead = 1 AND i.state = 'enriched'"
            " AND (i.screen_state IS NULL OR i.screen_state = 'deferred')")
@@ -167,19 +168,20 @@ def _pending(conn: sqlite3.Connection, cfg: Config, limit: int, item_ids: list[i
         params += item_ids
     else:
         sql += " AND i.first_seen_at >= ?"
-        params.append(iso_ago(days=cfg.settings.screen.max_age_days))
+        params.append(iso_ago(days=max_age_days or cfg.settings.screen.max_age_days))
     sql += " ORDER BY i.first_seen_at DESC, i.id DESC LIMIT ?"
     params.append(limit)
     return conn.execute(sql, params).fetchall()
 
 
 async def screen_pending(conn: sqlite3.Connection, cfg: Config, screener: Screener | None, *,
-                         max_batches: int | None = None, item_ids: list[int] | None = None) -> ScreenStats:
+                         max_batches: int | None = None, item_ids: list[int] | None = None,
+                         max_age_days: int | None = None) -> ScreenStats:
     global _backoff_until
     st = ScreenStats()
     llm = cfg.settings.llm
     sc = cfg.settings.screen
-    rows = _pending(conn, cfg, 2000, item_ids)
+    rows = _pending(conn, cfg, 5000, item_ids, max_age_days)
     if not rows:
         return st
     jobs: list[_Job] = []
