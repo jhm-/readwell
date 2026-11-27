@@ -24,6 +24,7 @@ views.yaml::
         min_score: 6         # ... at or above this score (default: each topic's own threshold)
         tags: [general-interest]   # ... plus every item from sources with these tags
         sources: []          # ... plus every item from these sources
+        exclude_tags: [registry]   # ... but nothing from sources with these tags
 """
 
 from __future__ import annotations
@@ -142,6 +143,7 @@ class View(BaseModel):
     min_score: float | None = None
     tags: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
+    exclude_tags: list[str] = Field(default_factory=list)  # leave out sources with these tags
 
     @property
     def label(self) -> str:

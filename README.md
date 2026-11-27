@@ -34,6 +34,8 @@ Readwell runs as two processes on a small Linux server: a **worker**, which fetc
 | `numbered` | Sequentially numbered documents at predictable URLs | The next number exists |
 | `documents` | Index pages or periodical PDFs (e.g. gazettes), split into individual instruments | A new document or instrument |
 | `email` | An IMAP mailbox of newsletters and alerts | A new message |
+| `json` | A public JSON API behind a JavaScript site, mapped with field templates (e.g. BC EAO's project portal) | A new record |
+| `yesab` | Project activity in the YESAB Online Registry (Yukon assessments) | A new activity event on any project |
 
 **Substack:** free posts come in through the publication's `/feed`. Paid posts arrive in full by email, and Readwell merges the two copies so the full version wins.
 

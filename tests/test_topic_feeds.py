@@ -191,3 +191,18 @@ def test_rescreen_that_drops_an_item_clears_its_old_matches(site, dirs):
     asyncio.run(Worker(config_dir, data_dir, transport=site.transport,
                        llm_transport=FakeClaude().transport).run_once([]))
     assert "Yukon pauses staking near Dawson" not in titles(client, "/feeds/topic/tenure.atom")
+
+
+def test_view_exclude_tags(site, dirs):
+    config_dir, data_dir = dirs
+    client = build(site, dirs)
+    (config_dir / "views.yaml").write_text(yaml.safe_dump({"views": {
+        "main": {"topics": "all", "exclude_tags": ["registry"]}, "reg": {"tags": ["registry"]}}}))
+    write_sources(config_dir, "s.yaml", [
+        {"id": "news", "name": "News", "feed_url": "https://news.test/rss", "full_text": "never", "tags": ["registry"]},
+        {"id": "fun", "feed_url": "https://fun.test/rss", "full_text": "never", "filter": {"mode": "none"}},
+    ])
+    client = TestClient(create_app(config_dir, data_dir))
+    assert titles(client, "/feeds/view/main.atom") == []
+    assert "Yukon pauses staking near Dawson" in titles(client, "/feeds/view/reg.atom")
+    assert "Yukon pauses staking near Dawson" in titles(client, "/feeds/topic/tenure.atom")

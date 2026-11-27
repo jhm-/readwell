@@ -30,8 +30,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 log = logging.getLogger(__name__)
 
-SOURCE_KINDS = {"feed", "listing", "numbered", "documents", "email"}
-IMPLEMENTED_KINDS = {"feed", "email", "numbered", "listing"}
+SOURCE_KINDS = {"feed", "listing", "numbered", "documents", "email", "json", "yesab"}
+IMPLEMENTED_KINDS = {"feed", "email", "numbered", "listing", "json", "yesab"}
 
 
 # --------------------------------------------------------------------------- settings
@@ -333,7 +333,7 @@ def load_config(config_dir: Path | None = None, data_dir: Path | None = None) ->
                 ident = entry.get("id", f"entry #{n}")
                 errors.append(f"{rel} [{ident}]: {e.errors()[0]['msg']}")
                 continue
-            if s.kind in ("feed", "listing") and not (s.url or s.feed_url):
+            if s.kind in ("feed", "listing", "json") and not (s.url or s.feed_url):
                 errors.append(f"{rel} [{s.id}]: feed sources need 'url' or 'feed_url'")
                 continue
             if s.id in sources:

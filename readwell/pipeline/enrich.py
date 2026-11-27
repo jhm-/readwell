@@ -72,7 +72,7 @@ async def _one(conn: sqlite3.Connection, fetcher: Fetcher, cfg: Config, r: sqlit
     doc_link = ((s.model_extra or {}).get("document_link") if s else None) or None
     need = (
         r["url"]
-        and (r["doc_type"] == "article" or doc_link)
+        and (r["doc_type"] == "article" or doc_link or mode == "always")
         and mode != "never"
         and (mode == "always" or (r["word_count"] or 0) < cfg.settings.extract.min_words)
     )

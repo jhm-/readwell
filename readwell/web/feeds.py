@@ -282,6 +282,9 @@ def view_feed(conn: sqlite3.Connection, cfg: Config, view: View, self_url: str, 
                                                 min_score=view.min_score).items() if t in topics}
             if m or r["source_id"] in srcs:
                 picked.append((r, m))
+    if view.exclude_tags:
+        skip = {s.id for s in cfg.sources.values() if set(s.tags) & set(view.exclude_tags)}
+        picked = [(r, m) for r, m in picked if r["source_id"] not in skip]
     picked = picked[: fs.max_entries]
     fg = _new_feed(f"view/{view.id}", f"{fs.title} — {view.label}", self_url, f"Combined feed: {view.label}")
     for r, m in picked:

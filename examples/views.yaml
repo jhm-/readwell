@@ -7,6 +7,7 @@ views:
     topics: all                # every topic match ...
     # min_score: 7             # ... optionally stricter than each topic's own threshold
     tags: [general-interest]   # ... plus everything from sources tagged general-interest
+    # exclude_tags: [registry] # ... but nothing from sources with these tags (they have their own view)
   reading:
     name: Reading
     tags: [general-interest]

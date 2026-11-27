@@ -61,6 +61,12 @@ def parse_human_date(s: str | None) -> str | None:
     from feedparser.datetimes import _parse_date  # RFC 822, ISO 8601, W3C-DTF and more
 
     s = re.sub(r"\s+", " ", s.replace(" ,", ",")).strip()
+    if re.match(r"\d{4}-\d{2}-\d{2}T", s):  # ISO 8601 first: feedparser misreads some ("…T07:00:00.000Z")
+        try:
+            d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return to_iso(d if d.tzinfo else d.replace(tzinfo=UTC))
+        except ValueError:
+            pass
     st = _parse_date(s)
     if st:
         return struct_to_iso(st)

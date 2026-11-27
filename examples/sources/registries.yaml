@@ -1,0 +1,24 @@
+# Public JSON APIs behind JavaScript sites (kind: json), and the YESAB registry (kind: yesab).
+# Field templates: {a.b.c} reads a dotted path, {a||b} takes the first non-empty value,
+# {x|date} and {x|html} format it. 'link' may be a list: the first template with a value wins.
+sources:
+  - id: bc-eao-activity
+    name: BC EAO — recent activity
+    kind: json
+    url: https://projects.eao.gov.bc.ca/demi-search/search?dataset=RecentActivity&top=true
+    items: "0.searchResults"
+    guid: "{_id||id}"
+    title: "EAO · {project.name}: {headline}"
+    link: "https://projects.eao.gov.bc.ca/p/{project._id}/project-details"
+    date: "{publishDate||dateAdded}"
+    body: "<p><i>{project.location|html}</i></p>{content}"
+    doc_type: notice
+    tags: [registry]
+    filter: { mode: llm }
+
+  - id: yesab
+    name: YESAB Online Registry
+    kind: yesab
+    url: https://yesabregistry.ca
+    tags: [registry]
+    filter: { mode: llm }
