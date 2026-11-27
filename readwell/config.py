@@ -116,6 +116,7 @@ class SourceCfg(BaseModel):
     tags: list[str] = Field(default_factory=list)
     filter: FilterCfg = Field(default_factory=FilterCfg)
     deliver_to: list[str] = Field(default_factory=list)
+    previous_ids: list[str] = Field(default_factory=list)  # rename: carry history over from these ids
     note: str | None = None
     check: bool = False
 
@@ -258,6 +259,10 @@ def load_config(config_dir: Path | None = None, data_dir: Path | None = None) ->
             errors.append(f"{rel}: {e}")
             continue
         for n, entry in enumerate(entries, 1):
+            if isinstance(entry.get("id"), bool | int | float):
+                errors.append(f"{rel} [entry #{n}]: id {entry['id']!r} isn't text — YAML reads bare words like "
+                              "on/off/yes/no and numbers as values; put the id in quotes")
+                continue
             entry.setdefault("interval_min", settings.worker.default_interval_min)
             try:
                 s = SourceCfg.model_validate(entry)

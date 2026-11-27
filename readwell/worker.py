@@ -52,10 +52,20 @@ class RunOutcome:
 
 
 def sync_sources(conn: sqlite3.Connection, cfg: Config) -> None:
-    """Make the sources table mirror the YAML. Rows for removed sources are kept (in_config=0)."""
+    """Make the sources table mirror the YAML. Rows for removed sources are kept (in_config=0).
+
+    A source with ``previous_ids`` takes over the history of the first of those ids that
+    exists, so renaming a source doesn't re-publish everything it already delivered.
+    """
     with db.tx(conn):
         existing = {r["id"]: r for r in conn.execute("SELECT id, kind, url FROM sources")}
         for s in cfg.sources.values():
+            if s.id not in existing:
+                for old in s.previous_ids:
+                    if old in existing and old not in cfg.sources:
+                        _rename_source(conn, old, s.id)
+                        existing[s.id] = existing.pop(old)
+                        break
             row = existing.get(s.id)
             url = s.feed_url or s.url
             if row is None:
@@ -76,6 +86,36 @@ def sync_sources(conn: sqlite3.Connection, cfg: Config) -> None:
         gone = set(existing) - set(cfg.sources)
         for sid in gone:
             conn.execute("UPDATE sources SET in_config = 0 WHERE id = ?", (sid,))
+        reelect_leads(conn)
+
+
+def _rename_source(conn: sqlite3.Connection, old: str, new: str) -> None:
+    log.info("renaming source %s -> %s (history kept)", old, new)
+    conn.execute("UPDATE sources SET id = ? WHERE id = ?", (new, old))
+    conn.execute("UPDATE items SET source_id = ? WHERE source_id = ?", (new, old))
+    conn.execute("UPDATE runs SET source_id = ? WHERE source_id = ?", (new, old))
+
+
+def reelect_leads(conn: sqlite3.Connection) -> int:
+    """Give each cluster whose lead came from a removed source a new, visible lead."""
+    rows = conn.execute(
+        """SELECT i.cluster_id FROM items i JOIN sources s ON s.id = i.source_id
+           WHERE i.is_lead = 1 AND i.cluster_id IS NOT NULL AND s.in_config = 0"""
+    ).fetchall()
+    moved = 0
+    for r in rows:
+        new = conn.execute(
+            """SELECT i.id FROM items i JOIN sources s ON s.id = i.source_id
+               WHERE i.cluster_id = ? AND s.in_config = 1 ORDER BY i.first_seen_at, i.id LIMIT 1""",
+            (r["cluster_id"],),
+        ).fetchone()
+        if new is None:
+            continue
+        conn.execute("UPDATE items SET is_lead = 0 WHERE cluster_id = ?", (r["cluster_id"],))
+        conn.execute("UPDATE items SET is_lead = 1 WHERE id = ?", (new["id"],))
+        conn.execute("UPDATE clusters SET lead_item_id = ? WHERE id = ?", (new["id"], r["cluster_id"]))
+        moved += 1
+    return moved
 
 
 def due_sources(conn: sqlite3.Connection, cfg: Config, at: str | None = None) -> list[SourceCfg]:

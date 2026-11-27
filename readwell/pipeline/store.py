@@ -9,7 +9,8 @@ Rules, in order:
    (headlines with fewer than ``min_title_words`` meaningful words never cluster: "Weather" ≠ "Weather")
 5. otherwise                                              → new row, cluster of one
 
-A cluster's lead is its earliest item; only leads are published, with every source listed.
+A cluster's lead is its earliest item; only leads are published, with every source listed. Items from
+sources removed from the config never attract new duplicates (they're no longer published).
 """
 
 from __future__ import annotations
@@ -90,8 +91,9 @@ def _find_cluster_match(conn: sqlite3.Connection, source_id: str, item: Normaliz
     """Return the id of an existing item this one duplicates, if any."""
     if item.canonical_url:
         row = conn.execute(
-            "SELECT id FROM items WHERE canonical_url = ? AND source_id != ? AND first_seen_at >= ?"
-            " ORDER BY id LIMIT 1",
+            "SELECT i.id FROM items i JOIN sources s ON s.id = i.source_id"
+            " WHERE i.canonical_url = ? AND i.source_id != ? AND i.first_seen_at >= ? AND s.in_config = 1"
+            " ORDER BY i.id LIMIT 1",
             (item.canonical_url, source_id, _window(now, days=cfg.url_window_days)),
         ).fetchone()
         if row:
@@ -100,7 +102,8 @@ def _find_cluster_match(conn: sqlite3.Connection, source_id: str, item: Normaliz
         mine = frozenset(item.title_key.split())
         if len(mine) >= cfg.min_title_words:
             rows = conn.execute(
-                "SELECT id, title_key FROM items WHERE title_key IS NOT NULL AND first_seen_at >= ? ORDER BY id",
+                "SELECT i.id, i.title_key FROM items i JOIN sources s ON s.id = i.source_id"
+                " WHERE i.title_key IS NOT NULL AND i.first_seen_at >= ? AND s.in_config = 1 ORDER BY i.id",
                 (_window(now, hours=cfg.title_window_hours),),
             )
             for r in rows:

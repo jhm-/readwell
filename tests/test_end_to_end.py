@@ -123,3 +123,39 @@ def test_web_explains_missing_config(tmp_path):
     client = TestClient(create_app(tmp_path / "missing", tmp_path / "data"))
     r = client.get("/feeds/all.atom")
     assert r.status_code == 503 and "config unavailable" in r.text
+
+
+def test_rename_keeps_history_and_removed_leads_are_replaced(site, dirs):
+    config_dir, data_dir = dirs
+    feed = fixture("rss.xml")
+    site.add("https://a.example/rss", feed, "application/rss+xml")
+    site.add("https://b.example/rss", feed, "application/rss+xml")  # same feed published twice
+    write_sources(config_dir, "s.yaml", [
+        {"id": "first", "feed_url": "https://a.example/rss"},
+        {"id": "twin", "feed_url": "https://b.example/rss"},
+    ])
+    w = Worker(config_dir, data_dir, transport=site.transport)
+    asyncio.run(w.run_once(["first"]))
+    asyncio.run(w.run_once(["twin"]))  # twin's copies cluster under first's leads
+    client = TestClient(create_app(config_dir, data_dir))
+    assert len(feedparser.parse(client.get("/feeds/all.atom").content).entries) == 2
+
+    # rename "first" -> "renamed" and drop the twin
+    write_sources(config_dir, "s.yaml", [
+        {"id": "renamed", "name": "Renamed", "feed_url": "https://a.example/rss", "previous_ids": ["first"]},
+    ])
+    w.reload_if_changed()
+    conn = db.connect(db.db_path(data_dir))
+    assert conn.execute("SELECT COUNT(*) FROM items WHERE source_id = 'renamed'").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM sources WHERE id = 'first'").fetchone()[0] == 0
+    out = {o.source_id: o for o in asyncio.run(w.run_once())}
+    assert out["renamed"].stats.new == 0 and out["renamed"].stats.known == 2  # nothing re-published
+    client = TestClient(create_app(config_dir, data_dir))
+    entries = feedparser.parse(client.get("/feeds/all.atom").content).entries
+    assert len(entries) == 2 and all("Renamed" in e.content[0].value for e in entries)
+
+    # now remove the source that holds the leads: the twin's copies must take over
+    write_sources(config_dir, "s.yaml", [{"id": "twin", "feed_url": "https://b.example/rss"}])
+    w.reload_if_changed()
+    client = TestClient(create_app(config_dir, data_dir))
+    assert len(feedparser.parse(client.get("/feeds/all.atom").content).entries) == 2
