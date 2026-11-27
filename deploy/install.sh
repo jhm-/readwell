@@ -99,8 +99,11 @@ fi
 
 # ------------------------------------------------------------------ Send to Supernote
 step "Send to Supernote (PDF rendering)"
-if ldconfig -p 2>/dev/null | grep -q 'libpango-1.0.so' && fc-list 2>/dev/null | grep -qi 'dejavu\|noto'; then
-    echo "  pango and fonts found"
+# (no "cmd | grep -q" here: with pipefail, grep quitting early makes the pipeline fail)
+fonts=$(fc-list 2>/dev/null || true)
+if as_svc "$APP_DIR/.venv/bin/python" -c 'import weasyprint' 2>/dev/null \
+        && [[ ${fonts,,} == *dejavu* || ${fonts,,} == *noto* ]]; then
+    echo "  PDF renderer and fonts found"
 else
     warn "pango or a basic font is missing, so 📄 Send to Supernote can't make good PDFs. Install them with:
       sudo pacman -S --needed pango ttf-dejavu
