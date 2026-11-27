@@ -72,12 +72,46 @@ def cmd_check(args: argparse.Namespace) -> int:
     print(f"checking {len(todo)} sources (each result prints as it finishes; at most {args.timeout:.0f} s per source)\n",
           flush=True)
 
+    rows: dict = {}
+    try:
+        conn = db.open_db(args.data_dir or default_data_dir())
+        rows = {r["id"]: r for r in conn.execute("SELECT * FROM sources")}
+    except Exception:  # noqa: BLE001 — no state yet is fine; non-feed checks then start from scratch
+        pass
+    blank = {"cursor": None, "baseline_done": 0, "resolved_url": None, "etag": None, "last_modified": None}
+
     async def run() -> int:
         bad = 0
         async with Fetcher(fetch_cfg) as f:
+            async def other_kind(s):
+                # email / numbered / listing: run the real fetch once, without storing anything
+                from .sources import REGISTRY, SourceContext
+
+                row = rows.get(s.id) or blank
+                if s.kind == "numbered" and not row["cursor"]:
+                    return s, "skip", "never run — its first run-once records the back catalogue"
+                try:
+                    res = await asyncio.wait_for(REGISTRY[s.kind](SourceContext(f, cfg, s, row)),
+                                                 timeout=args.timeout)
+                except TimeoutError:
+                    return s, "FAIL", f"timed out after {args.timeout:.0f} s"
+                except SourceError as e:
+                    return s, "FAIL", str(e)
+                n = len(res.items)
+                what = {"numbered": "new document(s) waiting", "email": "message(s) since last run"}.get(s.kind, "items")
+                return s, "ok", f"{n} {what}  [{s.kind}]"
+
             async def one(s):
+                try:
+                    return await check_one(s)
+                except Exception as e:  # noqa: BLE001 — report it; never let one source end the check
+                    return s, "FAIL", f"internal error: {type(e).__name__}: {e}"
+
+            async def check_one(s):
                 if not s.implemented:
                     return s, "skip", f"kind '{s.kind}' not built yet"
+                if s.kind != "feed":
+                    return await other_kind(s)
                 if s.feed_url:
                     try:
                         r = await asyncio.wait_for(f.get(s.feed_url), timeout=args.timeout)
