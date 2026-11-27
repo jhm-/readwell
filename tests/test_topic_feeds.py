@@ -151,3 +151,43 @@ def test_cli_screening_report(site, dirs, capsys):
     assert cli.main(["--config-dir", str(config_dir), "--data-dir", str(data_dir), "screening"]) == 0
     out = capsys.readouterr().out
     assert "spent $0.0009" in out and "tenure" in out and "screened" in out
+
+
+def test_rejected_items_without_scores_get_a_topic_picker(site, dirs):
+    client = build(site, dirs)
+    # a keyword-dropped item: no topic scores at all
+    config_dir, data_dir = dirs
+    site.add("https://town.test/rss", rss([("Council debates new library hours", "books")], host="town.test"),
+             "application/rss+xml")
+    write_sources(config_dir, "t.yaml", [{"id": "town", "feed_url": "https://town.test/rss", "full_text": "never"}])
+    asyncio.run(Worker(config_dir, data_dir, transport=site.transport,
+                       llm_transport=FakeClaude().transport).run_once())
+    entry = next(e for e in feedparser.parse(client.get("/feeds/rejected.atom").content).entries
+                 if e.title.startswith("Council"))
+    pick = links(entry.content[0].value)["👍 belongs in…"].replace("http://readwell.test:8080", "")
+    page = client.get(pick).text
+    assert "Mineral tenure" in page and "Ports &amp; rail" in page
+    assert client.get(pick.split("?")[0] + "?s=x").status_code == 403
+    vote = re.search(r'href="([^"]+)">Ports &amp; rail', page).group(1).replace("&amp;", "&")
+    client.get(vote.replace("http://readwell.test:8080", ""))
+    assert "Council debates new library hours" in titles(client, "/feeds/topic/ports.atom")
+    assert "✓" in client.get(pick).text
+
+
+def test_rescreen_that_drops_an_item_clears_its_old_matches(site, dirs):
+    from readwell import db
+    from readwell.screen.run import reset_for_rescreen
+
+    client = build(site, dirs)
+    config_dir, data_dir = dirs
+    assert "Yukon pauses staking near Dawson" in titles(client, "/feeds/topic/tenure.atom")
+    write_sources(config_dir, "s.yaml", [
+        {"id": "news", "name": "News", "feed_url": "https://news.test/rss", "full_text": "never",
+         "filter": {"mute": ["Dawson"]}},
+        {"id": "fun", "feed_url": "https://fun.test/rss", "full_text": "never", "tags": ["general-interest"],
+         "filter": {"mode": "none"}},
+    ])
+    reset_for_rescreen(db.connect(db.db_path(data_dir)), 3)
+    asyncio.run(Worker(config_dir, data_dir, transport=site.transport,
+                       llm_transport=FakeClaude().transport).run_once([]))
+    assert "Yukon pauses staking near Dawson" not in titles(client, "/feeds/topic/tenure.atom")

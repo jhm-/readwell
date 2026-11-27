@@ -118,6 +118,10 @@ def _content_key(r: sqlite3.Row, text: str) -> str:
 def _set_state(conn: sqlite3.Connection, item_id: int, state: str, reason: str | None = None) -> None:
     conn.execute("UPDATE items SET screen_state = ?, screen_reason = ?, screened_at = ? WHERE id = ?",
                  (state, reason, now_iso(), item_id))
+    if state in ("muted", "passthrough", "dropped", "skipped"):
+        # a re-screen that ends here must not leave earlier topic matches behind
+        conn.execute("DELETE FROM scores WHERE item_id = ? AND stage IN ('llm', 'keywords')", (item_id,))
+        conn.execute("UPDATE items SET screen_summary = NULL WHERE id = ?", (item_id,))
 
 
 def _write_scores(conn: sqlite3.Connection, item_id: int, stage: str, scores: dict[str, float]) -> None:

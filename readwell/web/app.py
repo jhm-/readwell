@@ -134,6 +134,28 @@ def create_app(config_dir: Path | None = None, data_dir: Path | None = None) -> 
         extra = f' <a href="{escape(undo)}">Undo</a>' if vote and undo else ""
         return HTMLResponse(_small_page(row["title"], msg + extra))
 
+    @app.get("/pick/{item_id}", response_class=HTMLResponse)
+    def pick(item_id: int, s: str | None = None) -> HTMLResponse:
+        """Choose the topic an item should have landed in (for items with no topic scores)."""
+        if not check(data_dir, f"pick/{item_id}", s):
+            raise HTTPException(403, "bad or missing signature")
+        cfg = holder.get()
+        c = conn()
+        try:
+            row = _item(c, item_id)
+            votes = {r["topic_id"]: r["vote"] for r in c.execute(
+                "SELECT topic_id, vote FROM feedback WHERE item_id = ?", (item_id,))}
+        finally:
+            c.close()
+        lk = links(cfg)
+        items = []
+        for t in (cfg.topics.topics if cfg.topics else []):
+            mark = " ✓" if votes.get(t.id) == 1 else ""
+            items.append(f'<li><a href="{escape(lk.vote(item_id, t.id, 1))}">{escape(t.label)}</a>{mark}</li>')
+        body = ("Which topic should this have been in? Your pick puts it in that feed and becomes an example"
+                f" for the filter.<ul>{''.join(items)}</ul>")
+        return HTMLResponse(_small_page(row["title"], body))
+
     @app.get("/send/{item_id}", response_class=HTMLResponse)
     def send(item_id: int, s: str | None = None) -> HTMLResponse:
         if not check(data_dir, f"send/{item_id}", s):
@@ -147,8 +169,8 @@ def create_app(config_dir: Path | None = None, data_dir: Path | None = None) -> 
                     c.execute("INSERT INTO sends (item_id, requested_at) VALUES (?, ?)", (item_id, now_iso()))
         finally:
             c.close()
-        return HTMLResponse(_small_page(row["title"], "📄 Sent ✓ — the PDF will be in <i>Saved Articles</i> within a"
-                                        " minute and reach the Supernote on its next sync."))
+        return HTMLResponse(_small_page(row["title"], "📄 Sent ✓ — the PDF will be in <i>Saved Articles</i> by the worker's"
+                                        " next pass (a few minutes) and reach the Supernote on its next sync."))
 
     @app.get("/feeds/source/{source_id}.atom")
     def source_feed(source_id: str, request: Request) -> Response:

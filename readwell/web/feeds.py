@@ -87,6 +87,12 @@ class Links:
         msg = f"fb/{item_id}/{topic_id}/{vote}"
         return f"{self.base_url.rstrip('/')}/{msg}?s={sign(self.data_dir, msg)}"
 
+    def pick(self, item_id: int) -> str | None:
+        if self.data_dir is None:
+            return None
+        msg = f"pick/{item_id}"
+        return f"{self.base_url.rstrip('/')}/{msg}?s={sign(self.data_dir, msg)}"
+
     def send(self, item_id: int) -> str | None:
         if self.data_dir is None:
             return None
@@ -135,12 +141,15 @@ def _entry_html(conn: sqlite3.Connection, cfg: Config, item: sqlite3.Row, links:
         send = links.send(item["id"])
         foot.append(f'<a href="{escape(send)}">📄 Send to Supernote</a>')
         vote_topics = list(matched) or [t for t, _ in sorted(sc.llm.items(), key=lambda kv: -kv[1])[:2]]
+        known = cfg.topics.by_id if cfg.topics else {}
         for tid in vote_topics:
-            if tid not in (cfg.topics.by_id if cfg.topics else {}):
+            if tid not in known:
                 continue
             up, down = links.vote(item["id"], tid, 1), links.vote(item["id"], tid, -1)
             foot.append(f'{escape(_topic_label(cfg, tid))}: <a href="{escape(up)}">👍</a> '
                         f'<a href="{escape(down)}">👎</a>')
+        if known and (rejected or not any(t in known for t in vote_topics)):
+            foot.append(f'<a href="{escape(links.pick(item["id"]))}">👍 belongs in…</a>')
     if foot:
         parts.append(f"<p {small}>{' · '.join(foot)}</p>")
     return "".join(parts)
