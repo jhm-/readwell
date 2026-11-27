@@ -1,0 +1,11 @@
+# Source kinds beyond 'feed' arrive in Phase 2. Shown here so the shapes are clear;
+# until then Readwell lists them as "not built yet" and skips them.
+
+id: example-orders
+name: Example orders-in-council
+kind: numbered
+url_template: "https://laws.example.gov/orders/{year}/{year}-{n:04d}.pdf"
+start: { year: 2026, n: 1 }
+probe_ahead: 5
+interval_min: 720
+filter: { mode: llm }

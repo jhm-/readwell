@@ -1,0 +1,29 @@
+[Unit]
+Description=Readwell web (Atom feeds, OPML, status page)
+Documentation=https://github.com/jhm-/readwell
+After=network-online.target remote-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=readwell
+Group=readwell
+EnvironmentFile=/etc/readwell/env
+WorkingDirectory=/opt/readwell
+ExecStart=/opt/readwell/.venv/bin/readwell serve
+Restart=on-failure
+RestartSec=5
+
+# Share the NUC politely: Emby and Home Assistant come first.
+Nice=10
+CPUWeight=50
+IOWeight=50
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/readwell
+
+[Install]
+WantedBy=multi-user.target

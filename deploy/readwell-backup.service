@@ -1,0 +1,17 @@
+[Unit]
+Description=Readwell nightly database backup
+After=remote-fs.target
+
+[Service]
+Type=oneshot
+User=readwell
+Group=readwell
+EnvironmentFile=/etc/readwell/env
+ExecStart=/opt/readwell/.venv/bin/readwell backup
+Nice=15
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/readwell
+ReadWritePaths=-/mnt/Data/Readwell

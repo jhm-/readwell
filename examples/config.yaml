@@ -1,0 +1,35 @@
+# Readwell settings. Copy to $READWELL_CONFIG_DIR/config.yaml; every key is optional.
+server:
+  host: 0.0.0.0
+  port: 8080
+  base_url: http://readwell.local:8080   # how readers reach this server (used in generated links)
+
+fetch:
+  user_agent: "Readwell/0.1 (+https://github.com/jhm-/readwell; personal feed reader)"
+  timeout_s: 30
+  max_concurrency: 8        # requests in flight across all hosts
+  per_host_delay_s: 1.0     # minimum gap between requests to the same host
+  max_backoff_hours: 24     # failing sources retry at interval × 2^failures, up to this
+
+worker:
+  tick_s: 30                # how often the worker looks for due sources
+  default_interval_min: 60  # for sources that don't set interval_min
+
+feeds:
+  title: Readwell
+  max_entries: 200
+  max_age_days: 30
+
+health:
+  failure_threshold: 5      # consecutive failures before a source appears in health.atom
+                            # (missing feeds and unreadable feeds appear immediately)
+
+dedupe:
+  url_window_days: 14       # same canonical URL within this window = same story
+  title_window_hours: 72    # near-identical headlines within this window = same story
+  min_title_words: 5        # shorter headlines never match ("Weather" ≠ "Weather")
+  title_containment: 0.9    # share of the shorter headline's words that must appear in the other
+
+retention:
+  content_days: 90          # article bodies are dropped after this; titles, links and scores stay
+  backups_keep: 14

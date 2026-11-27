@@ -2,7 +2,7 @@
 
 A self-hosted news reader backend. It turns websites, RSS feeds, government publications and email newsletters into clean Atom feeds, then uses an LLM to filter them down to the topics you care about. You read the results in any ordinary RSS reader.
 
-> **Status:** pre-alpha, in design and early build. Nothing here runs yet.
+> **Status:** pre-alpha. Phase 1 (feeds, discovery, dedupe, `all.atom`, `health.atom`) works; filtering comes in Phase 3.
 
 ## What it does
 
@@ -73,16 +73,26 @@ Once a day, Readwell can export borderline and over-budget items to a shared fol
 
 ## Configuration
 
-Your configuration is private and lives outside this repo. The path is set by `READWELL_CONFIG_DIR`. Examples are provided:
+Your configuration is private and lives outside this repo. The path is set by `READWELL_CONFIG_DIR`. Examples are in [`examples/`](examples):
 
 ```
-topics.example.yaml      # topic profiles: description, include, exclude, keywords
-views.example.yaml       # combined output feeds
-config.example.yaml      # paths, schedules, LLM model, daily budget
-sources.example/         # one YAML file per source, one example per kind
+config.yaml          # server, fetching, dedupe, retention (every key optional)
+sources/*.yaml       # sources: one per file, a list, or {defaults, sources}
+topics.yaml          # topic profiles: description, include, exclude, keywords
+views.yaml           # combined output feeds
 ```
 
 Secrets (API keys, the mailbox password, cookie files) go in an environment file readable only by the service user, never in YAML.
+
+## Install (Arch Linux)
+
+```bash
+git clone https://github.com/jhm-/readwell.git ~/readwell-src
+sudo ~/readwell-src/deploy/install.sh     # re-run any time to update
+readwell check                            # find every source's feed
+```
+
+The script creates a `readwell` system user, installs into `/opt/readwell` with a uv-managed Python, keeps state in `/var/lib/readwell`, writes `/etc/readwell/env`, and enables `readwell-web`, `readwell-worker` and a nightly backup timer. It never runs `pacman` itself. If the config share isn't mounted, it prints the fstab line to add.
 
 ## Requirements
 

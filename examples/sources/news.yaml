@@ -1,0 +1,25 @@
+# A source file can hold one source, a list, or {defaults, sources} as here.
+# 'url' can be any page on the site: Readwell finds the feed. Set 'feed_url' to skip discovery.
+defaults:
+  kind: feed
+  interval_min: 60
+
+sources:
+  - id: example-news            # lowercase letters, digits, '-' or '_'
+    name: Example News
+    url: https://news.example.com/
+    tags: [news]
+
+  - id: example-trade-press
+    name: Example Trade Press
+    feed_url: https://trade.example.com/rss.xml
+    interval_min: 30
+    tags: [trade]
+    filter: { mode: topics }    # topics | llm | keywords | none (Phase 3)
+
+  - id: example-essays
+    name: Example Essays
+    url: https://essays.example.org/
+    tags: [general-interest]
+    filter: { mode: none }      # unfiltered (Phase 3)
+    deliver_to: [main]          # always appears in the 'main' view (Phase 3)

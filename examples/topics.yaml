@@ -1,0 +1,28 @@
+# Topic profiles (used from Phase 3). Each item is scored 0-10 against every topic.
+# The LLM sees description + include + exclude (+ your 👍/👎 examples).
+# keywords only drive the cheap prefilter; they never decide the final verdict.
+
+defaults:
+  threshold: 6          # minimum score to land in the topic's feed
+
+topics:
+  - id: local-housing
+    name: Local housing policy
+    description: >
+      Decisions and proposals that change how much housing gets built locally, and where.
+    include:
+      - Zoning and density changes, permitting reforms
+      - Major housing projects approved, rejected or stalled
+    exclude:
+      - Individual real-estate listings, celebrity homes
+    keywords: [zoning, rezoning, density, housing, permits, development]
+
+  - id: transit
+    name: Public transit
+    description: >
+      Service changes, funding and construction for buses, rail and ferries in the region.
+    include:
+      - New routes, cuts, fare changes, capital projects
+    exclude:
+      - Traffic reports
+    keywords: [transit, bus, rail, ferry, fares, route]

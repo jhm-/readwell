@@ -1,0 +1,30 @@
+[Unit]
+Description=Readwell worker (fetch, dedupe, screen)
+Documentation=https://github.com/jhm-/readwell
+After=network-online.target remote-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=readwell
+Group=readwell
+EnvironmentFile=/etc/readwell/env
+WorkingDirectory=/opt/readwell
+ExecStart=/opt/readwell/.venv/bin/readwell worker
+Restart=always
+RestartSec=10
+
+Nice=10
+CPUWeight=50
+IOWeight=50
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/readwell
+# later phases write PDFs and exchange files to the NAS; '-' = fine if absent
+ReadWritePaths=-/mnt/Data/Readwell
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+# Combined output feeds (used from Phase 3): /feeds/view/<id>.atom
+views:
+  main:
+    name: Readwell — Main
+    topics: all            # every topic match ...
+    min_score: 6
+    tags: [general-interest]   # ... plus everything from sources tagged general-interest
+  reading:
+    name: Readwell — Reading
+    tags: [general-interest]
