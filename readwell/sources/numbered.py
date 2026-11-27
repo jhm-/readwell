@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..extract.document import find_act, html_doc_text, looks_like_pdf, pdf_text
 from ..models import FetchResult, HttpError, RawItem, SourceError
-from ..timeutil import now
+from ..timeutil import now, parse_human_date
 from .base import SourceContext, dump_cursor, register
 
 _cpu = asyncio.Semaphore(1)
@@ -45,6 +45,7 @@ class NumberedCfg(BaseModel):
     url_template: str
     start: Start
     title: str = "{year}-{n}"
+    append_act: bool = True  # add the first act named in the text to the title (off for whole gazette issues)
     expect: Literal["pdf", "html"] = "pdf"
     probe_ahead: int = 5
     year_rollover: bool = True
@@ -54,6 +55,7 @@ class NumberedCfg(BaseModel):
     baseline: bool = True
     max_per_run: int = 50
     baseline_max: int = 1500
+    date_pattern: str | None = None  # regex whose group 1 is the document's date, e.g. "Approved and Ordered (\\w+ \\d+, \\d{4})"
 
 
 def _url(c: NumberedCfg, year: int, n: int) -> str:
@@ -85,10 +87,15 @@ async def _probe(ctx: SourceContext, c: NumberedCfg, year: int, n: int) -> RawIt
         async with _cpu:
             doc = await asyncio.to_thread(html_doc_text, body, r.url)
     title = c.title.format(year=year, n=n)
-    act = find_act(doc.text) if doc.text else None
+    act = find_act(doc.text) if doc.text and c.append_act else None
     if act and act.lower() not in title.lower():
         title = f"{title} — {act}"
-    return RawItem(guid=f"{year}-{n:04d}", url=url, title=title, content_html=doc.html, doc_type=c.doc_type)
+    published = None
+    if c.date_pattern and doc.text:
+        m = re.search(c.date_pattern, doc.text)
+        published = parse_human_date(m.group(1)) if m else None
+    return RawItem(guid=f"{year}-{n:04d}", url=url, title=title, content_html=doc.html, doc_type=c.doc_type,
+                   published_at=published)
 
 
 async def _scan(ctx: SourceContext, c: NumberedCfg, year: int, after: int, budget: int) -> tuple[list[RawItem], int]:

@@ -13,6 +13,10 @@
       report_removals: true      # inventory: publish "Removed from listing: …" when an item disappears
       removal_grace_runs: 2
       full_text: auto            # fetch each item's own page for its text (auto | always | never)
+      pages: {template: "{url}?page={page}", max: 10}   # optional: follow numbered pages
+
+With ``pages``, page 2, 3, … are fetched until a page adds no new items or ``max`` is
+reached. Inventory mode needs every page, so removals are only judged on complete runs.
 
 ``mode: inventory`` makes the first run a silent baseline, so you only hear about new
 listings (``baseline: false`` publishes the current ones too). ``mode: stream`` publishes
@@ -26,14 +30,13 @@ import re
 from typing import Literal
 from urllib.parse import urljoin
 
-import feedparser
 from pydantic import BaseModel, ConfigDict, Field
 from selectolax.lexbor import LexborHTMLParser as HTMLParser
 from selectolax.lexbor import LexborNode
 
-from ..models import FetchResult, ParseError, RawItem, SourceError
+from ..models import FetchResult, HttpError, ParseError, RawItem, SourceError
 from ..pipeline.normalize import canonical_url
-from ..timeutil import struct_to_iso
+from ..timeutil import parse_human_date
 from .base import SourceContext, register
 
 
@@ -45,6 +48,13 @@ class FieldSpec(BaseModel):
     pattern: str | None = None  # optional regex; group 1 (or the whole match) is kept
 
 
+class PagesCfg(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    template: str = "{url}?page={page}"
+    start: int = 2
+    max: int = 10
+
+
 class ListingCfg(BaseModel):
     model_config = ConfigDict(extra="ignore")
     url: str
@@ -53,6 +63,8 @@ class ListingCfg(BaseModel):
     fields: dict[str, FieldSpec] = Field(default_factory=dict)
     baseline: bool | None = None  # default: True for inventory, False for stream
     min_items: int = 1
+    pages: PagesCfg | None = None
+    title_template: str | None = None  # e.g. "Alberta OIC {number} — {title}" (any field names)
 
 
 def _get(node: LexborNode, spec: FieldSpec, base_url: str) -> str | None:
@@ -74,9 +86,7 @@ def _get(node: LexborNode, spec: FieldSpec, base_url: str) -> str | None:
 
 
 def parse_date(s: str | None) -> str | None:
-    if not s:
-        return None
-    return struct_to_iso(feedparser._parse_date(s))  # handles RFC 822, ISO 8601 and many site formats
+    return parse_human_date(s)
 
 
 def extract_items(html: str | bytes, page_url: str, c: ListingCfg) -> list[RawItem]:
@@ -92,6 +102,11 @@ def extract_items(html: str | bytes, page_url: str, c: ListingCfg) -> list[RawIt
         if missing:
             continue
         title = vals.get("title")
+        if c.title_template:
+            try:
+                title = c.title_template.format(**{k: v or "" for k, v in vals.items()}).strip(" —-") or title
+            except (KeyError, IndexError, ValueError):
+                pass
         link = vals.get("link")
         if not (title or link):
             continue
@@ -108,16 +123,36 @@ def extract_items(html: str | bytes, page_url: str, c: ListingCfg) -> list[RawIt
     return items
 
 
+async def _page(ctx: SourceContext, url: str):
+    resp = await ctx.fetcher.get(url, accept="text/html,application/xhtml+xml;q=0.9,*/*;q=0.5")
+    if "html" not in resp.content_type:
+        raise ParseError(f"{resp.url} returned {resp.content_type or 'unknown type'}, not a web page")
+    return resp
+
+
 @register("listing")
 async def fetch_listing(ctx: SourceContext) -> FetchResult:
     try:
         c = ListingCfg.model_validate(ctx.source.model_dump())
     except ValueError as e:
         raise SourceError(f"listing recipe: {e}") from e
-    resp = await ctx.fetcher.get(c.url, accept="text/html,application/xhtml+xml;q=0.9,*/*;q=0.5")
-    if "html" not in resp.content_type:
-        raise ParseError(f"{resp.url} returned {resp.content_type or 'unknown type'}, not a web page")
+    resp = await _page(ctx, c.url)
     items = extract_items(resp.content, resp.url, c)
+    if c.pages and items:
+        seen = {i.guid for i in items}
+        for n in range(c.pages.start, c.pages.start + c.pages.max - 1):
+            try:
+                r = await _page(ctx, c.pages.template.format(url=c.url, page=n))
+            except HttpError as e:
+                if e.http_status in (404, 410):
+                    break  # ran past the last page
+                raise
+            more = extract_items(r.content, r.url, c)
+            fresh = [i for i in more if i.guid not in seen]
+            if not fresh:
+                break
+            seen |= {i.guid for i in fresh}
+            items += fresh
     if len(items) < c.min_items:
         raise ParseError(f"recipe matched {len(items)} items at {resp.url} — the page layout may have changed")
     inventory = c.mode == "inventory"

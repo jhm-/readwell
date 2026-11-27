@@ -55,6 +55,15 @@ def parse_retry_after(value: str | None) -> float | None:
         return None
 
 
+def is_bot_challenge(resp: Response) -> bool:
+    if resp.headers.get("cf-mitigated", "").lower() == "challenge":
+        return True
+    if resp.status in (403, 429, 503) and "html" in resp.content_type:
+        head = resp.content[:30000]
+        return b"challenge-platform" in head or b"<title>Just a moment" in head or b"_Incapsula_Resource" in head
+    return False
+
+
 class Fetcher:
     def __init__(self, cfg: FetchCfg, transport: httpx.AsyncBaseTransport | None = None):
         self.cfg = cfg
@@ -116,6 +125,11 @@ class Fetcher:
             finally:
                 self._host_last[host] = time.monotonic()
 
+        if is_bot_challenge(resp):
+            raise HttpError(
+                f"{resp.url} answered with a bot-check page (it only admits browsers); Readwell won't impersonate one",
+                http_status=resp.status if resp.status >= 400 else 403,
+            )
         if raise_for_status and resp.status >= 400:
             raise HttpError(
                 f"HTTP {resp.status} from {resp.url}",

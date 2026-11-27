@@ -102,3 +102,35 @@ def test_year_rollover(site, dirs, monkeypatch):
     assert o.stats.new == 2
     conn = db.connect(db.db_path(data_dir))
     assert json.loads(conn.execute("SELECT cursor FROM sources").fetchone()["cursor"]) == {"year": 2027, "n": 1}
+
+
+def test_date_pattern_and_whole_issue_titles(site, dirs):
+    config_dir, data_dir = dirs
+    pdf = make_pdf(["ORDER OF THE LIEUTENANT GOVERNOR IN COUNCIL", "Order in Council No. 66 , Approved and Ordered March 9, 2026",
+                    "Act and section: Mineral Tenure Act, s. 66"])
+    site.add("https://bc.test/oic/0001_2026", pdf, "application/pdf")
+    write_sources(config_dir, "s.yaml", [{
+        "id": "bc", "kind": "numbered", "url_template": "https://bc.test/oic/{n:04d}_{year}",
+        "start": {"year": 2026, "n": 1}, "title": "BC OIC {n}/{year}", "probe_ahead": 1, "baseline": False,
+        "year_rollover": False, "date_pattern": "Approved and Ordered\\s+([A-Z][a-z]+\\s+\\d{1,2}\\s*,\\s*\\d{4})",
+    }, {
+        "id": "gazette", "kind": "numbered", "url_template": "https://bc.test/oic/{n:04d}_{year}",
+        "start": {"year": 2026, "n": 1}, "title": "Gazette {year}-{n:02d}", "append_act": False, "probe_ahead": 1,
+        "baseline": False, "year_rollover": False,
+    }])
+    asyncio.run(Worker(config_dir, data_dir, transport=site.transport).run_once())
+    conn = db.connect(db.db_path(data_dir))
+    rows = {r["source_id"]: r for r in conn.execute("SELECT source_id, title, published_at FROM items")}
+    assert rows["bc"]["title"] == "BC OIC 1/2026 — Mineral Tenure Act"
+    assert rows["bc"]["published_at"] == "2026-03-09T12:00:00Z"
+    assert rows["gazette"]["title"] == "Gazette 2026-01"
+
+
+def test_bot_challenge_is_an_error_not_a_miss(site, dirs):
+    config_dir, data_dir = dirs
+    site.add(TEMPLATE.format(year=2026, n=1), "<html><title>Just a moment...</title>challenge-platform</html>",
+             "text/html", status=403)
+    write_sources(config_dir, "s.yaml", [{"id": "oic", "kind": "numbered", "url_template": TEMPLATE,
+                                          "start": {"year": 2026, "n": 1}}])
+    (o,) = asyncio.run(Worker(config_dir, data_dir, transport=site.transport).run_once())
+    assert o.status == "error" and "bot-check" in o.error

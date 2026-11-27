@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import re
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -50,3 +51,23 @@ def struct_to_iso(st: time.struct_time | None) -> str | None:
     if dt > now() + timedelta(days=1) or dt.year < 1995:
         return None
     return to_iso(dt)
+
+
+def parse_human_date(s: str | None) -> str | None:
+    """Dates as people write them on web pages and in documents ("March 9, 2026", "Nov 26, 2026",
+    "13th January 2026", RFC 822, ISO 8601). Returns ISO UTC (noon for date-only values) or None."""
+    if not s:
+        return None
+    from feedparser.datetimes import _parse_date  # RFC 822, ISO 8601, W3C-DTF and more
+
+    s = re.sub(r"\s+", " ", s.replace(" ,", ",")).strip()
+    st = _parse_date(s)
+    if st:
+        return struct_to_iso(st)
+    s = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", s)
+    for fmt in ("%B %d, %Y", "%B %d %Y", "%d %B %Y", "%d %B, %Y", "%Y-%m-%d", "%b %d, %Y", "%b. %d, %Y", "%b %d %Y"):
+        try:
+            return to_iso(datetime.strptime(s, fmt).replace(hour=12, tzinfo=UTC))
+        except ValueError:
+            continue
+    return None
