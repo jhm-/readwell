@@ -88,7 +88,7 @@ Secrets (API keys, the mailbox password, cookie files) go in an environment file
 
 ```bash
 git clone https://github.com/jhm-/readwell.git ~/readwell-src
-sudo ~/readwell-src/deploy/install.sh     # re-run any time to update
+sudo bash ~/readwell-src/deploy/install.sh   # re-run any time to update
 readwell check                            # find every source's feed
 ```
 

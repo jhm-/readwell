@@ -2,7 +2,7 @@
 # Install or update Readwell on an Arch Linux (systemd) host. Safe to re-run: re-running updates.
 #
 #   git clone https://github.com/jhm-/readwell.git ~/readwell-src
-#   sudo ~/readwell-src/deploy/install.sh
+#   sudo bash ~/readwell-src/deploy/install.sh
 #
 # Environment overrides: REPO_URL BRANCH APP_DIR DATA_DIR CONFIG_DIR NAS_MOUNT PORT
 set -euo pipefail
