@@ -285,6 +285,13 @@ def view_feed(conn: sqlite3.Connection, cfg: Config, view: View, self_url: str, 
     if view.exclude_tags:
         skip = {s.id for s in cfg.sources.values() if set(s.tags) & set(view.exclude_tags)}
         picked = [(r, m) for r, m in picked if r["source_id"] not in skip]
+    if view.max_per_day:
+        by_day: dict[str, list] = defaultdict(list)
+        for r, m in picked:
+            by_day[r["sort_date"][:10]].append((r, m))
+        keep = {r["id"] for day in by_day.values()
+                for r, _ in sorted(day, key=lambda e: -max(e[1].values(), default=0))[: view.max_per_day]}
+        picked = [(r, m) for r, m in picked if r["id"] in keep]
     picked = picked[: fs.max_entries]
     fg = _new_feed(f"view/{view.id}", f"{fs.title} — {view.label}", self_url, f"Combined feed: {view.label}")
     for r, m in picked:

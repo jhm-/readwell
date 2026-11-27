@@ -8,6 +8,11 @@ views:
     # min_score: 7             # ... optionally stricter than each topic's own threshold
     tags: [general-interest]   # ... plus everything from sources tagged general-interest
     # exclude_tags: [registry] # ... but nothing from sources with these tags (they have their own view)
+  top:
+    name: Top
+    topics: all
+    min_score: 8               # only strong matches ...
+    max_per_day: 10            # ... and at most the 10 best each day
   reading:
     name: Reading
     tags: [general-interest]

@@ -25,6 +25,7 @@ views.yaml::
         tags: [general-interest]   # ... plus every item from sources with these tags
         sources: []          # ... plus every item from these sources
         exclude_tags: [registry]   # ... but nothing from sources with these tags
+        max_per_day: 10      # ... and at most the 10 best-scoring items per day
 """
 
 from __future__ import annotations
@@ -144,6 +145,7 @@ class View(BaseModel):
     tags: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
     exclude_tags: list[str] = Field(default_factory=list)  # leave out sources with these tags
+    max_per_day: int | None = None  # keep only the N best-scoring items per day
 
     @property
     def label(self) -> str:

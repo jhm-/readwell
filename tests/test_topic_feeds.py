@@ -206,3 +206,13 @@ def test_view_exclude_tags(site, dirs):
     assert titles(client, "/feeds/view/main.atom") == []
     assert "Yukon pauses staking near Dawson" in titles(client, "/feeds/view/reg.atom")
     assert "Yukon pauses staking near Dawson" in titles(client, "/feeds/topic/tenure.atom")
+
+
+def test_view_min_score_and_daily_cap(site, dirs):
+    config_dir, data_dir = dirs
+    build(site, dirs)
+    (config_dir / "views.yaml").write_text(yaml.safe_dump({"views": {
+        "top": {"topics": "all", "min_score": 8, "max_per_day": 1}}}))
+    client = TestClient(create_app(config_dir, data_dir))
+    top = titles(client, "/feeds/view/top.atom")
+    assert len(top) == 1 and "staking" in top[0].lower()  # the FakeClaude scores staking items 9
