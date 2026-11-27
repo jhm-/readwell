@@ -51,6 +51,7 @@ def safe_filename(item_id: int, title: str | None) -> str:
 
 def article_html(conn: sqlite3.Connection, cfg: Config, item: sqlite3.Row) -> str:
     from .web.feeds import _best_body, _source_name
+    from .web.tidy import tidy_html
 
     src = _source_name(cfg, item["source_id"])
     date = (item["published_at"] or item["first_seen_at"] or "")[:10]
@@ -58,7 +59,7 @@ def article_html(conn: sqlite3.Connection, cfg: Config, item: sqlite3.Row) -> st
     parts = [f"<h1>{escape(item['title'] or '(untitled)')}</h1>", f'<div class="meta">{meta}</div>']
     if item["screen_summary"]:
         parts.append(f'<p class="summary">{escape(item["screen_summary"])}</p>')
-    body = _best_body(conn, item) or "<p><i>Readwell has no text for this item.</i></p>"
+    body = tidy_html(_best_body(conn, item)) or "<p><i>Readwell has no text for this item.</i></p>"
     parts.append(body)
     tail = []
     if item["screen_reason"]:

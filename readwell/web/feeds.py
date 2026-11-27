@@ -19,6 +19,7 @@ from ..timeutil import from_iso, now, to_iso
 from . import match
 from .match import ItemScores
 from .sign import sign
+from .tidy import tidy_html
 
 TAG = "tag:readwell,2026:"
 
@@ -132,7 +133,7 @@ def _entry_html(conn: sqlite3.Connection, cfg: Config, item: sqlite3.Row, links:
     summary = item["screen_summary"] if "screen_summary" in item.keys() else None
     if summary:
         parts.append(f"<p><b>Summary:</b> {escape(summary)}</p><hr>")
-    parts.append(_best_body(conn, item))
+    parts.append(tidy_html(_best_body(conn, item)))
     foot = []
     if item["url"]:
         host = urlsplit(item["url"]).hostname or item["url"]
