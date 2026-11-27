@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 
 from ..config import SourceCfg
 from ..discovery import discover, parse_feed
 from ..fetch.http import Fetcher
-from ..models import DiscoveryError, FetchResult, ParseError, RawItem
+from ..models import DiscoveryError, FetchResult, NetworkError, ParseError, RawItem
 from ..timeutil import struct_to_iso
+
+DISCOVERY_BUDGET_S = 180  # a slow or tarpitting site shouldn't hold a worker slot for many minutes
 
 
 async def resolve(fetcher: Fetcher, cfg: SourceCfg) -> str:
     if cfg.feed_url:
         return cfg.feed_url
     assert cfg.url
-    found = await discover(fetcher, cfg.url, limit=1)
+    try:
+        found = await asyncio.wait_for(discover(fetcher, cfg.url, limit=1), timeout=DISCOVERY_BUDGET_S)
+    except TimeoutError as e:
+        raise NetworkError(f"feed discovery for {cfg.url} took over {DISCOVERY_BUDGET_S} s") from e
     if not found:
         raise DiscoveryError(
             f"no feed found at {cfg.url}; set 'feed_url' for this source, or give it a recipe (kind: listing)"

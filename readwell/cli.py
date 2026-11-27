@@ -67,17 +67,23 @@ def cmd_check(args: argparse.Namespace) -> int:
     for e in cfg.errors:
         print(f"  ! {e}")
     todo = [s for s in cfg.sources.values() if not args.ids or s.id in args.ids]
+    # snappier than the worker: shorter per-request timeout, and a cap per source
+    fetch_cfg = cfg.settings.fetch.model_copy(update={"timeout_s": min(cfg.settings.fetch.timeout_s, 15.0)})
+    print(f"checking {len(todo)} sources (each result prints as it finishes; at most {args.timeout:.0f} s per source)\n",
+          flush=True)
 
     async def run() -> int:
         bad = 0
-        async with Fetcher(cfg.settings.fetch) as f:
+        async with Fetcher(fetch_cfg) as f:
             async def one(s):
                 if not s.implemented:
                     return s, "skip", f"kind '{s.kind}' not built yet"
                 if s.feed_url:
                     return s, "ok", f"{s.feed_url} (set in config)"
                 try:
-                    found = await discover(f, s.url, limit=1)
+                    found = await asyncio.wait_for(discover(f, s.url, limit=1), timeout=args.timeout)
+                except TimeoutError:
+                    return s, "FAIL", f"timed out after {args.timeout:.0f} s (site slow or blocking us)"
                 except SourceError as e:
                     return s, "FAIL", str(e)
                 if not found:
@@ -85,9 +91,10 @@ def cmd_check(args: argparse.Namespace) -> int:
                 d = found[0]
                 return s, "ok", f"{d.url}  [{d.version}, {d.entries} entries, via {d.how}]"
 
-            for s, status, msg in await asyncio.gather(*(one(s) for s in todo)):
+            for fut in asyncio.as_completed([one(s) for s in todo]):
+                s, status, msg = await fut
                 bad += status == "FAIL"
-                print(f"{status:4}  {s.id:28} {msg}")
+                print(f"{status:4}  {s.id:28} {msg}", flush=True)
         print(f"\n{len(todo) - bad} ok / {bad} failed")
         return 1 if bad or cfg.errors else 0
 
@@ -191,6 +198,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_serve)
     sp = sub.add_parser("check")
     sp.add_argument("ids", nargs="*")
+    sp.add_argument("--timeout", type=float, default=60.0, help="seconds allowed per source (default 60)")
     sp.set_defaults(fn=cmd_check)
     sp = sub.add_parser("discover")
     sp.add_argument("url")
