@@ -1,0 +1,43 @@
+# --- Never commit: capture artifacts with live sessions / personal media ---
+*.har
+*auth*.json
+cookies/
+*.cookies
+*.txt.cookies
+
+# --- Personal configuration (keep private; ship *.example.yaml instead) ---
+topics.yaml
+views.yaml
+config.yaml
+sources/
+local/
+!sources.example/
+
+# --- Secrets & runtime state ---
+.env
+*.env
+/etc/
+*.db
+*.db-wal
+*.db-shm
+exchange/*.jsonl
+exchange/brief-*.md
+cache/
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
