@@ -5,7 +5,7 @@ server:
   base_url: http://readwell.local:8080   # how readers reach this server (used in generated links)
 
 fetch:
-  user_agent: "Readwell/0.1 (+https://github.com/jhm-/readwell; personal feed reader)"
+  user_agent: "Readwell/0.1 (personal feed reader)"   # avoid URLs here: some CDNs treat "+http…" UAs as bots
   timeout_s: 30
   max_concurrency: 8        # requests in flight across all hosts
   per_host_delay_s: 1.0     # minimum gap between requests to the same host

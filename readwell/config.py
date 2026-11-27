@@ -48,7 +48,8 @@ class ServerCfg(_Strict):
 
 
 class FetchCfg(_Strict):
-    user_agent: str = "Readwell/0.1 (+https://github.com/jhm-/readwell; personal feed reader)"
+    # No URL in the UA: some CDNs (CBC's, for one) stall or reset requests whose UA contains "+http…".
+    user_agent: str = "Readwell/0.1 (personal feed reader)"
     timeout_s: float = 30.0
     max_concurrency: int = 8
     per_host_delay_s: float = 1.0
