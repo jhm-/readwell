@@ -62,6 +62,10 @@ class HttpError(SourceError):
     kind = "http"
 
 
+class TooLargeError(HttpError):
+    """The response passed the size cap; the URL exists, it's just too big to read."""
+
+
 class NetworkError(SourceError):
     kind = "network"
 

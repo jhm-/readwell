@@ -182,3 +182,42 @@ def test_crash_in_one_source_does_not_stop_the_others(site, dirs, monkeypatch):
     out = {o.source_id: o for o in asyncio.run(Worker(config_dir, data_dir, transport=site.transport).run_once())}
     assert out["oic"].status == "error" and "parser exploded" in out["oic"].error
     assert out["news"].status == "ok"
+
+
+def test_oversize_document_is_listed_as_a_link(site, dirs):
+    config_dir, data_dir = dirs
+    site.add(TEMPLATE.format(year=2026, n=1), b"%PDF-1.4\n" + b"0" * 3_000_000, "application/pdf")
+    write_sources(config_dir, "s.yaml", [{"id": "oic", "kind": "numbered", "url_template": TEMPLATE, "max_mb": 1,
+                                          "start": {"year": 2026, "n": 1}, "probe_ahead": 1, "baseline": False,
+                                          "year_rollover": False, "title": "OIC {year}/{n}"}])
+    (o,) = asyncio.run(Worker(config_dir, data_dir, transport=site.transport).run_once())
+    assert o.status == "ok" and o.stats.new == 1
+    row = db.connect(db.db_path(data_dir)).execute("SELECT title, content_html FROM items").fetchone()
+    assert row["title"] == "OIC 2026/1" and "too large" in row["content_html"]
+
+
+def test_catch_up_keeps_progress_and_stays_silent_across_errors(site, dirs):
+    config_dir, data_dir = dirs
+    for n in (1, 2):
+        site.add(TEMPLATE.format(year=2026, n=n), oic(n, "Notaries Act"), "application/pdf")
+    site.add(TEMPLATE.format(year=2026, n=3), "busy", "text/html", status=504)
+    write_sources(config_dir, "s.yaml", [{"id": "oic", "kind": "numbered", "url_template": TEMPLATE,
+                                          "start": {"year": 2026, "n": 1}, "probe_ahead": 2,
+                                          "year_rollover": False}])
+    w = Worker(config_dir, data_dir, transport=site.transport)
+    (o,) = asyncio.run(w.run_once())
+    assert o.status == "ok" and o.stats.new == 2  # kept 1 and 2 despite the 504 at 3
+    conn = db.connect(db.db_path(data_dir))
+    assert json.loads(conn.execute("SELECT cursor FROM sources").fetchone()["cursor"]) == {
+        "year": 2026, "n": 2, "catching_up": True}
+
+    site.add(TEMPLATE.format(year=2026, n=3), oic(3, "Lands Act"), "application/pdf")
+    (o,) = asyncio.run(w.run_once())
+    assert o.stats.new == 1
+    assert {r["state"] for r in conn.execute("SELECT state FROM items")} == {"baseline"}  # still back catalogue
+    assert json.loads(conn.execute("SELECT cursor FROM sources").fetchone()["cursor"]) == {"year": 2026, "n": 3}
+
+    site.add(TEMPLATE.format(year=2026, n=4), oic(4, "Placer Mining Act"), "application/pdf")
+    asyncio.run(w.run_once())
+    states = {r["guid"]: r["state"] for r in conn.execute("SELECT guid, state FROM items")}
+    assert states["2026-0004"] != "baseline"  # caught up: new numbers are published

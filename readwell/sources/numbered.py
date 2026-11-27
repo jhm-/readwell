@@ -16,7 +16,11 @@ HTTP 404/410, on content of the wrong type (an HTML error page instead of a PDF)
 ``must_contain`` doesn't match, or when ``miss_text`` does.
 
 The first run is a baseline: it catches up to the latest number without publishing the
-back catalogue (``baseline: false`` publishes it instead).
+back catalogue (``baseline: false`` publishes it instead). Progress is kept even when a run
+stops early (a server error, or ``baseline_max``), and the catch-up stays silent until it
+reaches the latest number.
+
+A document bigger than ``max_mb`` is still listed, as a link with no text.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from ..extract.document import find_act, html_doc_text, looks_like_pdf, pdf_text
-from ..models import FetchResult, HttpError, RawItem, SourceError
+from ..models import FetchResult, HttpError, RawItem, SourceError, TooLargeError
 from ..timeutil import now, parse_human_date
 from .base import SourceContext, dump_cursor, register
 
@@ -55,6 +59,7 @@ class NumberedCfg(BaseModel):
     baseline: bool = True
     max_per_run: int = 50
     baseline_max: int = 1500
+    max_mb: float = 60
     date_pattern: str | None = None  # regex whose group 1 is the document's date, e.g. "Approved and Ordered (\\w+ \\d+, \\d{4})"
 
 
@@ -65,7 +70,11 @@ def _url(c: NumberedCfg, year: int, n: int) -> str:
 async def _probe(ctx: SourceContext, c: NumberedCfg, year: int, n: int) -> RawItem | None:
     url = _url(c, year, n)
     try:
-        r = await ctx.fetcher.get(url, accept="application/pdf,text/html;q=0.9,*/*;q=0.5")
+        r = await ctx.fetcher.get(url, accept="application/pdf,text/html;q=0.9,*/*;q=0.5",
+                                  max_bytes=int(c.max_mb * 1_000_000))
+    except TooLargeError:
+        return RawItem(guid=f"{year}-{n:04d}", url=url, title=c.title.format(year=year, n=n), doc_type=c.doc_type,
+                       content_html=f"<p><i>Over {c.max_mb:g} MB, too large to read here — open the document.</i></p>")
     except HttpError as e:
         if e.http_status in (404, 410):
             return None
@@ -98,18 +107,27 @@ async def _probe(ctx: SourceContext, c: NumberedCfg, year: int, n: int) -> RawIt
                    published_at=published)
 
 
-async def _scan(ctx: SourceContext, c: NumberedCfg, year: int, after: int, budget: int) -> tuple[list[RawItem], int]:
+async def _scan(ctx: SourceContext, c: NumberedCfg, year: int, after: int, budget: int,
+                found_before: int = 0) -> tuple[list[RawItem], int, bool]:
+    """Returns (items, last number found, complete). Stops early on budget or on an error after progress."""
     items: list[RawItem] = []
     last, misses, n = after, 0, after + 1
-    while misses < c.probe_ahead and len(items) < budget:
-        item = await _probe(ctx, c, year, n)
+    while misses < c.probe_ahead:
+        if len(items) >= budget:
+            return items, last, False
+        try:
+            item = await _probe(ctx, c, year, n)
+        except SourceError:
+            if not (items or found_before):
+                raise  # no progress to keep: report it
+            return items, last, False  # keep what we have; the next run resumes (and reports it if it persists)
         if item is None:
             misses += 1
         else:
             items.append(item)
             last, misses = n, 0
         n += 1
-    return items, last
+    return items, last, True
 
 
 @register("numbered")
@@ -123,19 +141,23 @@ async def fetch_numbered(ctx: SourceContext) -> FetchResult:
     cur = ctx.cursor
     year = int(cur.get("year", c.start.year))
     last = int(cur.get("n", c.start.n - 1))
-    first = ctx.first_run
-    budget = c.baseline_max if first else c.max_per_run
+    catching_up = ctx.first_run or bool(cur.get("catching_up"))
+    budget = c.baseline_max if catching_up else c.max_per_run
 
-    items, last = await _scan(ctx, c, year, last, budget)
-    if c.year_rollover and now().year > year and len(items) < budget:
-        nxt, nxt_last = await _scan(ctx, c, year + 1, 0, budget - len(items))
+    items, last, complete = await _scan(ctx, c, year, last, budget)
+    if complete and c.year_rollover and now().year > year:
+        nxt, nxt_last, complete = await _scan(ctx, c, year + 1, 0, budget - len(items), found_before=len(items))
         if nxt:
             items += nxt
             year, last = year + 1, nxt_last
 
+    cursor = {"year": year, "n": last}
+    silent = catching_up and c.baseline
+    if silent and not complete:
+        cursor["catching_up"] = True
     return FetchResult(
         items=items,
-        cursor=dump_cursor({"year": year, "n": last}),
-        baseline=first and c.baseline,
+        cursor=dump_cursor(cursor),
+        baseline=silent,
         expect_items=False,
     )

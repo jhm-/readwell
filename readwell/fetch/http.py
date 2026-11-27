@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..config import FetchCfg
-from ..models import HttpError, NetworkError
+from ..models import HttpError, NetworkError, TooLargeError
 from ..timeutil import now
 
 FEED_ACCEPT = (
@@ -100,6 +100,7 @@ class Fetcher:
         last_modified: str | None = None,
         accept: str | None = None,
         raise_for_status: bool = True,
+        max_bytes: int | None = None,
     ) -> Response:
         host = (urlsplit(url).hostname or "").lower()
         headers = {}
@@ -115,7 +116,7 @@ class Fetcher:
             if wait > 0:
                 await asyncio.sleep(wait)
             try:
-                resp = await self._get_capped(url, headers)
+                resp = await self._get_capped(url, headers, max_bytes or self.cfg.max_bytes)
             except httpx.TooManyRedirects as e:
                 raise HttpError(f"too many redirects: {e}") from e
             except httpx.TimeoutException as e:
@@ -140,13 +141,13 @@ class Fetcher:
             )
         return resp
 
-    async def _get_capped(self, url: str, headers: dict[str, str]) -> Response:
+    async def _get_capped(self, url: str, headers: dict[str, str], max_bytes: int) -> Response:
         async with self.client.stream("GET", url, headers=headers) as r:
             chunks: list[bytes] = []
             size = 0
             async for chunk in r.aiter_bytes():
                 size += len(chunk)
-                if size > self.cfg.max_bytes:
-                    raise HttpError(f"response from {url} exceeds {self.cfg.max_bytes} bytes")
+                if size > max_bytes:
+                    raise TooLargeError(f"response from {url} exceeds {max_bytes} bytes")
                 chunks.append(chunk)
             return Response(r.status_code, str(r.url), r.headers, b"".join(chunks))
