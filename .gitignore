@@ -5,13 +5,14 @@ cookies/
 *.cookies
 *.txt.cookies
 
-# --- Personal configuration (keep private; ship *.example.yaml instead) ---
-topics.yaml
-views.yaml
-config.yaml
-sources/
-local/
-!sources.example/
+# --- Personal configuration (keep private; examples/ holds the public samples) ---
+/topics.yaml
+/views.yaml
+/config.yaml
+/sources/
+/config/
+/data/
+/local/
 
 # --- Secrets & runtime state ---
 .env
