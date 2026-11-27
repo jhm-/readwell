@@ -16,6 +16,9 @@ from .article import extract_article
 
 ACT = re.compile(r"\b((?:[A-Z][A-Za-z'’\-]+,? (?:and |of |the |de |du )?){1,7}Act)\b")
 log = logging.getLogger(__name__)
+# pypdf logs a warning per quirk in a malformed font table — thousands per document on some
+# government PDFs. Its real failures arrive as exceptions, which pdf_text handles.
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 SCANNED = "<p><i>Scanned document with no text layer — open the PDF to read it.</i></p>"
 
