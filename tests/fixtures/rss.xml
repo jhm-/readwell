@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+  <title>Example Mining News</title>
+  <link>https://news.example.com/</link>
+  <item>
+    <title>Territory withdraws land from staking near Ross River</title>
+    <link>https://news.example.com/2026/11/withdrawal?utm_source=rss&amp;utm_medium=feed</link>
+    <guid isPermaLink="false">ex-1001</guid>
+    <pubDate>{{RFC_2H}}</pubDate>
+    <description><![CDATA[<p>The territorial government announced an interim withdrawal.</p><script>track()</script>]]></description>
+  </item>
+  <item>
+    <title>Weather</title>
+    <link>https://news.example.com/weather</link>
+    <guid isPermaLink="false">ex-1002</guid>
+    <pubDate>{{RFC_8H}}</pubDate>
+    <description>Cold.</description>
+  </item>
+</channel>
+</rss>

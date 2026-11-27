@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Other Outlet</title>
+  <link href="https://other.example.org/"/>
+  <id>urn:other</id>
+  <updated>{{ISO_1H}}</updated>
+  <entry>
+    <title>Territory withdraws land from staking near Ross River, First Nation says</title>
+    <link href="https://other.example.org/articles/land-withdrawal"/>
+    <id>urn:other:1</id>
+    <updated>{{ISO_1H}}</updated>
+    <content type="html">&lt;p&gt;Full story about the withdrawal with many more words than the summary.&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>Syndicated copy of the withdrawal story</title>
+    <link href="https://www.news.example.com/2026/11/withdrawal/?fbclid=abc"/>
+    <id>urn:other:2</id>
+    <updated>{{ISO_30M}}</updated>
+    <summary>Same URL as the first outlet's story.</summary>
+  </entry>
+</feed>
